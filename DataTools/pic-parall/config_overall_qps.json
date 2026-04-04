@@ -1512,19 +1512,9 @@
                            "acorn_efs_step_fast": 500
                         }
                      },
-                     {
-                        "name":"FastSmartRoute",
-                        "params": {
-                           "lsearch_start": 500,
-                           "lsearch_end": 20000,
-                           "lsearch_step": 500,
-                           "acorn_efs_start": 500,
-                           "acorn_efs_step_slow": 500,
-                           "acorn_efs_step_fast": 500
-                        }
-                     },
                      "UNG",
                      "SmartRoute",
+                     "FastSmartRoute",
                      "NaviX",
                      "pre-filtering"
                   ]
@@ -1585,7 +1575,7 @@
                         "name":"FastSmartRoute",
                         "params": {
                            "lsearch_start": 10,
-                           "lsearch_end": 500,
+                           "lsearch_end": 60,
                            "lsearch_step": 10,
                            "acorn_efs_start": 10,
                            "acorn_efs_step_slow": 10,
@@ -2594,18 +2584,17 @@
       "curated_mixed_plots": [
          {
             "enabled": true,
-            "task_name": "Mixed_Music_Reviews_Plot",
-            "output_filename": "mixed_music_reviews.png",
+            "task_name": "Mixed_SmartRoute_Plot",
+            "output_filename": "mixed_smart_route.png",
             "main_title": "Performance Comparison on Mixed Queries",
             "plot_settings": {
                "grid_layout": [1, 2],
                "legend_cols": 3,
-               "layout_rect_top": 0.65, 
+               "layout_rect_top": 0.72, 
                "legend_anchor_y": 1.00, 
                "use_log_scale_y": true,
                "custom_alg_order": [
-                  "UNG", "ImprovedUNG", "NaviX","ACORN-1", "ACORN-γ", "ACORN-γ-improved", 
-                   "pre-filtering",  "NaiveRoute","SmartRoute"
+                   "ACORN-1","UNG", "ACORN-γ","pre-filtering","NaviX","SmartRoute"
                ]
             },
             "datasets_to_compare": [
@@ -2626,59 +2615,47 @@
                   },
                   "algorithms_to_compare": [
                      "UNG",
-                     "ImprovedUNG",
+                     "SmartRoute",
+                     "NaviX",
+                     "pre-filtering",
                      {
                         "name": "ACORN-1",
                         "params": { "acorn_efs_start": 200, "acorn_efs_step_slow": 1000, "acorn_efs_step_fast": 1000 }
                      },
                      {
                         "name": "ACORN-γ",
-                        "params": { "acorn_efs_start": 200, "acorn_efs_step_slow": 1000, "acorn_efs_step_fast": 1000 }
-                     },
-                     {
-                        "name": "ACORN-γ-improved",
-                        "params": { "acorn_efs_start": 200, "acorn_efs_step_slow": 200, "acorn_efs_step_fast": 200 }
-                     },
-                     "SmartRoute",
-                     "pre-filtering",
-                     "NaviX",
-                     "NaiveRoute"
+                        "params": { "acorn_efs_start": 200, "acorn_efs_step_slow": 1000, "acorn_efs_step_fast":1000 }
+                     }
                   ]
                },
                {
-                  "dataset_name": "VariousImg",
-                  "subplot_title": "VariousImg\nmixed",
+                  "dataset_name": "Tiktok",
+                  "subplot_title": "Tiktok\nmixed",
                   "common_parameters": {
                      "threads": 100,
                      "K": 10,
                      "query_dir_name": "query_select_imp_A_B_C-weighted-sub-base-123456789",
-                     "lsearch_start": 20,
+                     "lsearch_start": 1000,
                      "lsearch_end": 40000,
                      "lsearch_step": 1000,
-                     "acorn_efs_start": 50,
-                     "acorn_efs_step_slow": 200,
-                     "acorn_efs_step_fast": 200,
+                     "acorn_efs_start": 500,
+                     "acorn_efs_step_slow": 500,
+                     "acorn_efs_step_fast": 500,
                      "lsearch_threshold": 5000
                   },
                   "algorithms_to_compare": [
-                     "UNG",
-                     "ImprovedUNG",
                      {
                         "name": "ACORN-1",
-                        "params": { "acorn_efs_start": 200, "acorn_efs_step_slow": 200, "acorn_efs_step_fast": 200 }
+                        "params": { "acorn_efs_start": 500, "acorn_efs_step_slow": 500, "acorn_efs_step_fast": 500 }
                      },
                      {
                         "name": "ACORN-γ",
-                        "params": { "acorn_efs_start": 200, "acorn_efs_step_slow": 200, "acorn_efs_step_fast":200 }
+                        "params": { "acorn_efs_start": 500, "acorn_efs_step_slow": 500, "acorn_efs_step_fast": 500 }
                      },
-                     {
-                        "name": "ACORN-γ-improved",
-                        "params": { "acorn_efs_start": 200, "acorn_efs_step_slow": 200, "acorn_efs_step_fast": 200 }
-                     },
+                     "UNG",
                      "SmartRoute",
                      "pre-filtering",
-                     "NaviX",
-                     "NaiveRoute"
+                     "NaviX"
                   ]
                }
             ]

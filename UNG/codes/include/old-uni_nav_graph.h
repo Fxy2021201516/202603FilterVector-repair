@@ -31,7 +31,6 @@ namespace ANNS
       double descendants_merge_time_ms;  // descendants合并耗时
       double coverage_merge_time_ms;     // coverage合并耗时
       double get_min_super_sets_time_ms; // 获取最小入口集合耗时
-      double fpass_time_ms = 0.0;
 
       size_t num_distance_calcs;
       int acorn_efs_used;
@@ -259,16 +258,6 @@ namespace ANNS
       const std::vector<LabelType>& query_labels,
       size_t& cand_size) const;
 
-    // 使用CRoaring进行bitmap计算
-    std::vector<roaring::Roaring> _vec_attr_roaring_inv;// 底层向量级别的 CRoaring 倒排索引 (用于极速计算 GlobalPpass)
-    void build_vector_inverted_indices();
-    void search_baseline_exact_roaring(
-        const char* query,
-        const roaring::Roaring& valid_bitmap,
-        IdxType K,
-        std::pair<IdxType, float>* results,
-        size_t& num_distance_calcs);
-
 
       // 求search中flag需要的数据结构
       std::vector<BitsetType> _lng_descendants_bits; // 每个 group 的后代集合
@@ -444,8 +433,9 @@ namespace ANNS
 
       // smartroute selector
       std::unique_ptr<MethodSelector> _smart_route_selector;    // 单层 SmartRoute (5特征)
-      std::unique_ptr<MethodSelector> _fast_route_single_selector;
-      int _single_majority_acorn_id = 2; // 单层模型的 ACORN 多数派兜底
+      std::unique_ptr<MethodSelector> _fast_route_l1_selector;  // FastSmartRoute L1 (3特征)
+      std::unique_ptr<MethodSelector> _fast_route_l2_selector;
+      int _l1_majority_acorn_id = 2; // 默认兜底为 2 (ACORN-gamma)，以防文件读取失败
       int _naive_majority_acorn_id = 2; // 用于存储 Naive SmartRoute的 ACORN 家族多数派 ID
       int determine_routing_strategy(
         int routing_mode, 

@@ -36,13 +36,14 @@ ACORN_FAMILY = ['ACORN-gamma', 'NaviX']
 MODELS_TO_TRY = ["RandomForest", "XGBoost", "LightGBM", "DecisionTree"]
 
 MARGIN_THRESHOLD = 0.20 
-USE_SMOTE = False
+USE_SMOTE_L1 = False
+USE_SMOTE_L2 = False
 
-ROUTE_STRATEGY = {
+CASCADE_STRATEGY = {
     "default": "auto"
 }
 
-SUMMARY_OUT_DIR = os.path.join(BASE_DIR, "SelectModels_summary", "fast_smart_route")
+SUMMARY_OUT_DIR = os.path.join(BASE_DIR, "SelectModels_summary", "fast_smart_route_2")
 
 # ==========================================
 # 2. 核心功能与特征
@@ -111,18 +112,23 @@ def label_best_algorithm_by_time(df, time_prefix='L1_Time_ms', min_recall=0.90, 
             
     return pd.Series(best_algos, index=df.index)
 
-def generate_features(df):
-    # 构建单层特征
-    X = pd.DataFrame(index=df.index)
-    X['GlobalPpass'] = df['GlobalPpass']
-    X['NumDescendants'] = df['NumDescendants']
-    X['QuerySize'] = df['QuerySize']
-    X['CandSize'] = df['CandSize']
+def generate_cascade_features(df):
+    # 构建 L1 层特征
+    X_L1 = pd.DataFrame(index=df.index)
+    X_L1['GlobalPpass'] = df['GlobalPpass']
+    X_L1['NumDescendants'] = df['NumDescendants']
+    X_L1['QuerySize'] = df['QuerySize']
+    X_L1['CandSize'] = df['CandSize']
+    
+    # 构建 L2 层特征
+    X_L2 = X_L1.copy() 
+    X_L2['NumEntries'] = df['NumEntries'] 
     
     # 清理异常值 (NaN, inf) 
-    X.replace([np.inf, -np.inf], np.nan, inplace=True); X.fillna(0, inplace=True)
+    X_L1.replace([np.inf, -np.inf], np.nan, inplace=True); X_L1.fillna(0, inplace=True)
+    X_L2.replace([np.inf, -np.inf], np.nan, inplace=True); X_L2.fillna(0, inplace=True)
     
-    return X
+    return X_L1, X_L2
 
 def train_and_evaluate_model(X_train, y_train, X_test, y_test, target_map, model_type, use_smote=False):
     y_train_mapped = y_train.map(target_map)
@@ -287,32 +293,41 @@ def save_onnx_model(classifier, model_type, num_features, output_dir, filename, 
     except Exception as e:
         print(f"❌ 导出 ONNX 模型时发生错误: {e}")
 
-def calculate_system_accuracy(X_test, X_ELS_test, y_global_best_test, 
-                              clf, real_classes, TARGET_MAP,
-                              els_clf,
-                              majority_acorn_algo):
-    inv_map = {v: k for k, v in TARGET_MAP.items()}
+def calculate_cascade_system_accuracy(X_L1_test, X_L2_test, X_ELS_test, y_global_best_test, 
+                                      l1_clf, l1_real_classes, L1_MAP,
+                                      els_clf,
+                                      l2_clf, l2_real_classes, L2_MAP,
+                                      majority_acorn_algo):
+    inv_L1 = {v: k for k, v in L1_MAP.items()}
+    inv_L2 = {v: k for k, v in L2_MAP.items()}
     
-    preds_raw = clf.predict(X_test.values)
-    preds_mapped = [real_classes[int(idx)] for idx in preds_raw]
+    preds_l1_raw = l1_clf.predict(X_L1_test.values)
+    preds_l1_mapped = [l1_real_classes[int(idx)] for idx in preds_l1_raw]
     
     final_preds = []
-    for i, mapped_idx in enumerate(preds_mapped):
-        decision = inv_map[mapped_idx]
+    for i, l1_mapped_idx in enumerate(preds_l1_mapped):
+        l1_decision = inv_L1[l1_mapped_idx]
         
-        if decision == 'pre-filter':
+        if l1_decision == 'pre-filter':
             final_preds.append('pre-filter')
-        elif decision == 'ACORN_Family':
+        elif l1_decision == 'ACORN_Family':
             final_preds.append(majority_acorn_algo) 
-        elif decision == 'UNG_Family': 
+        else: 
             els_decision = 'UNG-nTfalse' 
             if els_clf is not None:
                 els_features = X_ELS_test.iloc[[i]].values 
                 els_pred = els_clf.predict(els_features)[0]
                 els_decision = 'UNG-nTtrue' if els_pred == 1 else 'UNG-nTfalse'
-            final_preds.append(els_decision)
-        else:
-            final_preds.append('Unknown')
+                
+            row_features = X_L2_test.iloc[[i]].values
+            pred_l2_raw = l2_clf.predict(row_features)[0]
+            pred_l2_mapped = l2_real_classes[int(pred_l2_raw)]
+            l2_decision = inv_L2[pred_l2_mapped]
+            
+            if l2_decision == 'UNG_Family':
+                final_preds.append(els_decision)
+            else:
+                final_preds.append(l2_decision)
             
     valid_mask = y_global_best_test != 'Unknown'
     y_true_valid = y_global_best_test[valid_mask]
@@ -334,13 +349,13 @@ def generate_comparison_table(metrics_list, layer_name, feature_count):
 # ==========================================
 def process_single_dataset(dataset_name):
     print(f"\n{'='*70}")
-    print(f"🚀 开始处理单层路由数据集: {dataset_name}")
+    print(f"🚀 开始处理双层路由数据集: {dataset_name}")
     print(f"{'='*70}")
     
     csv_path = os.path.join(BASE_DIR, "EDA_Plots", dataset_name, f"{dataset_name}_aligned_results.csv")
-    output_dir = os.path.join(BASE_DIR, dataset_name, "SelectModels", "fast_smart_route")
+    output_dir = os.path.join(BASE_DIR, dataset_name, "SelectModels", "fast_smart_route_2")
     os.makedirs(output_dir, exist_ok=True)
-    report_path = os.path.join(output_dir, f"FastSmartRoute_Single_Report_{dataset_name}.txt")
+    report_path = os.path.join(output_dir, f"FastSmartRoute_Cascade_Report_{dataset_name}.txt")
     
     if not os.path.exists(csv_path):
         print(f"❌ 找不到数据文件: {csv_path}，跳过。")
@@ -349,12 +364,13 @@ def process_single_dataset(dataset_name):
     df = pd.read_csv(csv_path)
     
     df['Global_Best'] = label_best_algorithm_by_time(df, time_prefix='L1_Time_ms', min_recall=0.90, threshold=MARGIN_THRESHOLD)
+    df['L2_Best'] = label_best_algorithm_by_time(df, time_prefix='L2_Time_ms', min_recall=0.90, threshold=MARGIN_THRESHOLD)
     
-    # 映射为三大类
-    df['Target'] = df['Global_Best'].replace({a: 'ACORN_Family' for a in ACORN_FAMILY})
-    df['Target'] = df['Target'].replace({'UNG-nTfalse': 'UNG_Family', 'UNG-nTtrue': 'UNG_Family'})
+    df['L1_Target'] = df['Global_Best'].replace({a: 'ACORN_Family' for a in ACORN_FAMILY})
+    df['L1_Target'] = df['L1_Target'].replace({'UNG-nTfalse': 'NEED_ELS', 'UNG-nTtrue': 'NEED_ELS'})
+    df['L2_Target'] = df['L2_Best'].replace({'UNG-nTfalse': 'UNG_Family', 'UNG-nTtrue': 'UNG_Family'})
     
-    X = generate_features(df)
+    X_L1, X_L2 = generate_cascade_features(df)
     
     X_ELS = pd.DataFrame(index=df.index)
     for feat in ['QuerySize', 'CandSize', 'TrieTotalNodes']:
@@ -370,15 +386,17 @@ def process_single_dataset(dataset_name):
     X_ELS.replace([np.inf, -np.inf], np.nan, inplace=True)
     X_ELS.fillna(0, inplace=True)
     
-    valid_mask = (df['Global_Best'] != 'Unknown')
+    valid_mask = (df['Global_Best'] != 'Unknown') & (df['L2_Best'] != 'Unknown')
     valid_indices = df[valid_mask].index
     
     train_idx, test_idx = train_test_split(valid_indices, test_size=0.2, random_state=42)
     
-    X_train, X_test = X.loc[train_idx], X.loc[test_idx]
+    X_L1_train, X_L1_test = X_L1.loc[train_idx], X_L1.loc[test_idx]
+    X_L2_train, X_L2_test = X_L2.loc[train_idx], X_L2.loc[test_idx]
     X_ELS_test = X_ELS.loc[test_idx]
     
-    y_train, y_test = df.loc[train_idx, 'Target'], df.loc[test_idx, 'Target']
+    y_L1_train, y_L1_test = df.loc[train_idx, 'L1_Target'], df.loc[test_idx, 'L1_Target']
+    y_L2_train, y_L2_test = df.loc[train_idx, 'L2_Target'], df.loc[test_idx, 'L2_Target']
     y_Global_Best_test = df.loc[test_idx, 'Global_Best']
 
     els_model_path = os.path.join(BASE_DIR, dataset_name, "SelectModels", "intelElS", "idea1_selector_model_final.joblib")
@@ -387,103 +405,138 @@ def process_single_dataset(dataset_name):
         print(f"[ELS 集成] 成功加载 ELS Router: {els_model_path}")
         els_clf = joblib.load(els_model_path)
     else:
-        print("[ELS 集成] ⚠️ 未找到 ELS 模型，评估时 UNG 将默认走 nTfalse。")
+        print("[ELS 集成] ⚠️ 未找到 ELS 模型，级联评估时 UNG 将默认走 nTfalse。")
 
-    TARGET_MAP = {'UNG_Family': 0, 'ACORN_Family': 1, 'pre-filter': 2}
+    L1_TARGET_MAP = {'NEED_ELS': 0, 'ACORN_Family': 1, 'pre-filter': 2}
+    L2_TARGET_MAP = {'UNG_Family': 0, 'ACORN-gamma': 1, 'NaviX': 2, 'pre-filter': 3}
 
-    cache, metrics = run_arena_for_layer(X_train, y_train, X_test, y_test, TARGET_MAP, "Single Layer (单层路由)", use_smote=USE_SMOTE)
+    l1_cache, l1_metrics = run_arena_for_layer(X_L1_train, y_L1_train, X_L1_test, y_L1_test, L1_TARGET_MAP, "Layer 1 (网关层)", use_smote=USE_SMOTE_L1)
+    l2_cache, l2_metrics = run_arena_for_layer(X_L2_train, y_L2_train, X_L2_test, y_L2_test, L2_TARGET_MAP, "Layer 2 (裁判层)", use_smote=USE_SMOTE_L2)
 
-    current_strategy = ROUTE_STRATEGY
-    if isinstance(ROUTE_STRATEGY, dict):
-        current_strategy = ROUTE_STRATEGY.get(dataset_name, ROUTE_STRATEGY.get("default", "auto"))
+    current_strategy = CASCADE_STRATEGY
+    if isinstance(CASCADE_STRATEGY, dict):
+        current_strategy = CASCADE_STRATEGY.get(dataset_name, CASCADE_STRATEGY.get("default", "auto"))
 
-    if isinstance(current_strategy, str) and current_strategy != "auto":
-        best_model = current_strategy
-        strategy_desc = f"Manual ({best_model})"
+    if isinstance(current_strategy, dict):
+        best_l1_model = current_strategy.get("L1", "RandomForest")
+        best_l2_model = current_strategy.get("L2", "RandomForest")
+        strategy_desc = f"Manual ({best_l1_model} & {best_l2_model})"
     else: 
-        best_model = max(metrics, key=lambda x: x['Accuracy'])['Model']
-        strategy_desc = "Auto (自动取优)"
+        best_l1_model = max(l1_metrics, key=lambda x: x['Accuracy'])['Model']
+        best_l2_model = max(l2_metrics, key=lambda x: x['Accuracy'])['Model']
+        strategy_desc = "Auto (全自动综合取优)"
 
-    print(f"\n[策略选定] 胜出模型: {best_model}")
+    print(f"\n[策略选定] L1 胜出模型: {best_l1_model} | L2 胜出模型: {best_l2_model}")
     
-    res = cache[best_model]
+    l1_res = l1_cache[best_l1_model]
+    l2_res = l2_cache[best_l2_model]
 
-    # ablation_study = run_layer_ablation(X_train, y_train, X_test, y_test, TARGET_MAP, best_model)
+    # print("\n[运行特征消融实验 (Ablation Study) ...]")
+    # ablation_l1 = run_layer_ablation(X_L1_train, y_L1_train, X_L1_test, y_L1_test, L1_TARGET_MAP, best_l1_model)
+    # ablation_l2 = run_layer_ablation(X_L2_train, y_L2_train, X_L2_test, y_L2_test, L2_TARGET_MAP, best_l2_model)
+    
     # dataset_ablation = []
-    # for config, acc in ablation_study.items():
-    #     dataset_ablation.append({"Dataset": dataset_name, "Layer": "Single_Layer", "Config": config, "Accuracy": acc})
+    # for config, acc in ablation_l1.items():
+    #     dataset_ablation.append({"Dataset": dataset_name, "Layer": "L1", "Config": config, "Accuracy": acc})
+    # for config, acc in ablation_l2.items():
+    #     dataset_ablation.append({"Dataset": dataset_name, "Layer": "L2", "Config": config, "Accuracy": acc})
     
     dataset_ablation = []
+    ablation_l1 = {}
+    ablation_l2 = {}
         
     dataset_importances = []
-    if res['importances_dict']:
-        imp = res['importances_dict'].copy()
-        imp.update({"Dataset": dataset_name, "Layer": "Single_Layer", "Model": best_model})
-        dataset_importances.append(imp)
+    if l1_res['importances_dict']:
+        imp1 = l1_res['importances_dict'].copy()
+        imp1.update({"Dataset": dataset_name, "Layer": "L1", "Model": best_l1_model})
+        dataset_importances.append(imp1)
+    if l2_res['importances_dict']:
+        imp2 = l2_res['importances_dict'].copy()
+        imp2.update({"Dataset": dataset_name, "Layer": "L2", "Model": best_l2_model})
+        dataset_importances.append(imp2)
 
-    acorn_mask_train = df.loc[train_idx, 'Target'] == 'ACORN_Family'
+    acorn_mask_train = df.loc[train_idx, 'L1_Target'] == 'ACORN_Family'
     if acorn_mask_train.sum() > 0:
         majority_acorn_algo = df.loc[train_idx][acorn_mask_train]['Global_Best'].mode()[0]
     else:
         majority_acorn_algo = 'ACORN-gamma'
         
     cpp_algo_map = {'ACORN-gamma': 2, 'NaviX': 4}
-    with open(os.path.join(output_dir, "majority_acorn_id.txt"), "w") as f:
+    with open(os.path.join(output_dir, "l1_majority_acorn_id.txt"), "w") as f:
         f.write(str(cpp_algo_map.get(majority_acorn_algo, 2)))
 
-    system_acc = calculate_system_accuracy(
-        X_test, X_ELS_test, y_Global_Best_test, 
-        res['classifier'], res['real_classes'], TARGET_MAP,
+    system_acc = calculate_cascade_system_accuracy(
+        X_L1_test, X_L2_test, X_ELS_test, y_Global_Best_test, 
+        l1_res['classifier'], l1_res['real_classes'], L1_TARGET_MAP,
         els_clf,
+        l2_res['classifier'], l2_res['real_classes'], L2_TARGET_MAP,
         majority_acorn_algo
     )
 
-    save_onnx_model(res['classifier'], best_model, X_train.shape[1], output_dir, "router.onnx", res['real_classes'])
+    save_onnx_model(l1_res['classifier'], best_l1_model, X_L1_train.shape[1], output_dir, "l1_router.onnx", l1_res['real_classes'])
+    save_onnx_model(l2_res['classifier'], best_l2_model, X_L2_train.shape[1], output_dir, "l2_router.onnx", l2_res['real_classes'])
 
     # 汇总输出到 TXT 战报
     with open(report_path, "w", encoding="utf-8") as f:
         f.write("┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓\n")
-        f.write("┃               Fast Single-Layer Routing Assessment Report          ┃\n")
+        f.write("┃               Fast Cascade Routing Assessment Report               ┃\n")
         f.write("┣━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┫\n")
         f.write(f"┃ 数据集  : {dataset_name:<15} 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S'):<20} ┃\n")
-        f.write(f"┃ 选用策略: {strategy_desc:<52} ┃\n")
+        f.write(f"┃ 组装策略: {strategy_desc:<52} ┃\n")
         f.write("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n\n")
         
-        f.write("【零 | 模型竞技与特征对比 (Model Arena Comparison)】\n")
+        f.write("【零 | 双层路由 (Layer Arena Comparison)】\n")
         f.write("-" * 80 + "\n")
-        f.write(generate_comparison_table(metrics, "Single Layer - 单层路由", X_train.shape[1]) + "\n")
+        f.write(generate_comparison_table(l1_metrics, "Layer 1 - 极速拦截层", X_L1_train.shape[1]) + "\n")
+        f.write(generate_comparison_table(l2_metrics, "Layer 2 - 图结构裁判层", X_L2_train.shape[1]) + "\n")
 
-        f.write("【壹 | 端到端表现评估 (End-to-End Evaluation)】\n")
+        f.write("【壹 | 级联决算与端到端表现 (End-to-End Evaluation)】\n")
         f.write("-" * 80 + "\n")
-        f.write(f"  ▶ 选定引擎 : {best_model}\n")
-        f.write(f"  ▶ 多数派短路兜底 (ACORN_Family): {majority_acorn_algo}\n\n")
+        f.write(f"  ▶ 选定 L1 引擎 : {best_l1_model}\n")
+        f.write(f"  ▶ 选定 L2 引擎 : {best_l2_model}\n")
+        f.write(f"  ▶ 多数派短路兜底: {majority_acorn_algo}\n\n")
         f.write(f"  🚀 模拟流水线分发最终准确率 (System End-to-End Accuracy): {system_acc:.4%}\n\n")
 
         # f.write("【贰 | 特征消融实验 (Feature Ablation Study)】\n")
         # f.write("-" * 80 + "\n")
-        # for config, acc in ablation_study.items():
+        # f.write("  [L1 网关层]\n")
+        # for config, acc in ablation_l1.items():
+        #     f.write(f"  - {config:<20} : {acc:.4%}\n")
+        # f.write("\n  [L2 裁判层]\n")
+        # for config, acc in ablation_l2.items():
         #     f.write(f"  - {config:<20} : {acc:.4%}\n")
         # f.write("\n")
 
-        f.write("【叁 | 胜出模型透视 (Selected Model Deep Dive)】\n")
+        f.write("【叁 | 胜出模型透视 (Selected Models Deep Dive)】\n")
         f.write("-" * 80 + "\n")
-        f.write(f"[胜出者: {best_model}]\n")
-        f.write("  ▶ 详细分类报告:\n  " + res['cls_report'].replace('\n', '\n  ') + "\n")
-        f.write("  ▶ 混淆矩阵:\n  " + res['cm_df'].to_string().replace('\n', '\n  ') + "\n\n")
-        f.write("  ▶ 特征重要性:\n  " + res['importance_str'].replace('\n', '\n  ') + "\n\n")
+        
+        f.write(f"[L1 胜出者: {best_l1_model}]\n")
+        f.write("  ▶ 详细分类报告:\n  " + l1_res['cls_report'].replace('\n', '\n  ') + "\n")
+        f.write("  ▶ 混淆矩阵:\n  " + l1_res['cm_df'].to_string().replace('\n', '\n  ') + "\n\n")
+        f.write("  ▶ 特征重要性:\n  " + l1_res['importance_str'].replace('\n', '\n  ') + "\n\n")
+
+        f.write(f"[L2 胜出者: {best_l2_model}]\n")
+        f.write("  ▶ 详细分类报告:\n  " + l2_res['cls_report'].replace('\n', '\n  ') + "\n")
+        f.write("  ▶ 混淆矩阵:\n  " + l2_res['cm_df'].to_string().replace('\n', '\n  ') + "\n\n")
+        f.write("  ▶ 特征重要性:\n  " + l2_res['importance_str'].replace('\n', '\n  ') + "\n")
         
     print(f"\n✅ 评估完成！详尽log已同步至: {report_path}")
     
     dataset_metrics = []
-    for m in metrics:
+    for m in l1_metrics:
         m_copy = m.copy()
-        m_copy.update({"Dataset": dataset_name, "Layer": "Single_Layer"})
+        m_copy.update({"Dataset": dataset_name, "Layer": "L1"})
+        dataset_metrics.append(m_copy)
+        
+    for m in l2_metrics:
+        m_copy = m.copy()
+        m_copy.update({"Dataset": dataset_name, "Layer": "L2"})
         dataset_metrics.append(m_copy)
         
     dataset_metrics.append({
         "Dataset": dataset_name,
         "Layer": "System_End_to_End",
-        "Model": f"Single({best_model})",
+        "Model": f"L1({best_l1_model})_L2({best_l2_model})",
         "Accuracy": system_acc,
         "Train_Time_ms": np.nan, 
         "Pred_Latency_us": np.nan,
@@ -516,7 +569,7 @@ def main():
         df_all = df_all[[c for c in cols_order if c in df_all.columns]]
         csv1_path = os.path.join(SUMMARY_OUT_DIR, "fast_all_datasets_metrics.csv")
         df_all.to_csv(csv1_path, index=False)
-        print(f"\n✅ [全局报表 1] 各数据集单层算法明细已保存至: {csv1_path}")
+        print(f"\n✅ [全局报表 1] 各数据集双层算法明细已保存至: {csv1_path}")
         
         # 2. 消融实验汇总表 (利用 Pivot 透视表格式化)
         if global_ablation:

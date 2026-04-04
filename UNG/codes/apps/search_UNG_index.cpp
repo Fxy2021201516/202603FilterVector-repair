@@ -172,7 +172,7 @@ int main(int argc, char **argv)
       desc.add_options()("num_repeats", po::value<int>(&num_repeats)->default_value(1),
                          "Number of repeats for each Lsearch value");
       desc.add_options()("routing_mode", po::value<int>(&routing_mode)->required(),
-                         "routing_mode");
+                         "0: auto, 1: SmartRoute, 2: FastSmartRoute, 3: FastSmartRoute+");
       desc.add_options()("lsearch_start", po::value<int>(&lsearch_start)->required(), "Lsearch start value");
       desc.add_options()("lsearch_step", po::value<int>(&lsearch_step)->required(), "Lsearch step value");
       desc.add_options()("efs_start", po::value<int>(&efs_start)->required(), "ACORN efs start value");
@@ -215,6 +215,8 @@ int main(int argc, char **argv)
    ANNS::UniNavGraph index(query_storage->get_num_points());
    index.load(index_path_prefix, selector_modle_prefix, data_type, acorn_index_path, acorn_1_index_path,dataset);
    index.load_bipartite_graph(index_path_prefix + "vector_attr_graph");
+   index.build_group_inverted_indices();
+   index.build_vector_inverted_indices();
 
 
    // Naxiv
@@ -329,6 +331,11 @@ int main(int argc, char **argv)
       // );
    // }
       
+
+   // 5-Method Fpass Benchmark
+   // std::cout << "\n--- Step: Benchmarking 5 Fpass Calculation Methods ---" << std::endl;
+   // std::string fpass_csv_path = result_path_prefix + "fpass_benchmark_5methods.csv";
+   // index.evaluate_fpass_methods(query_storage, fpass_csv_path);
 
    // Warm-up selector
    std::cout << "\n--- Starting Warm-up Phase ---" << std::endl;
@@ -518,7 +525,8 @@ int main(int argc, char **argv)
    detail_out << "repeat,Lsearch,efs,QueryID,Time_ms,search_time_ms,core_search_time_ms,Recall,"         
               << "Algo_Choice,IsIntelElsUsed,IsTrieRec,"                                                         
               << "DistCalcs,NumNodeVisited,"                                                             
-              << "MinSupersetT_ms,IntelELS_PredT_ms,Route_PredT_ms,L1_PredT_ms,L2_PredT_ms,Routing_TotalT_ms,BitmapT_new_ms,FeatureT_ms," 
+              << "MinSupersetT_ms,IntelELS_PredT_ms,Route_PredT_ms,FpassT_ms,Routing_TotalT_ms,BitmapT_new_ms,FeatureT_ms," 
+            //   << "MinSupersetT_ms,IntelELS_PredT_ms,Route_PredT_ms,Routing_TotalT_ms,BitmapT_new_ms,FeatureT_ms," 
               << "AcornFilterType,"
               << "QuerySize,CandSize,ExactCandSize,GlobalPpass,"
               << "NumEntries,NumDescendants"
@@ -546,9 +554,7 @@ int main(int argc, char **argv)
                        << stats.get_min_super_sets_time_ms << ","
                        << stats.intel_els_pred_time_ms << ","
                        << stats.route_pred_time_ms << ","
-                       << stats.l1_pred_time_ms << ","
-                       << stats.l2_pred_time_ms << ","
-                       // ---------------------------------------------------
+                       << stats.fpass_time_ms << ","
                        << stats.routing_total_time_ms << ","
                        << stats.bitmap_time_ms << ","
                        << stats.feature_extract_time_ms << ","

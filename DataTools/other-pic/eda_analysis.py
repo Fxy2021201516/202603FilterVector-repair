@@ -13,23 +13,23 @@ import seaborn as sns
 BASE_DIR = "/home/fengxiaoyao/FilterVector/FilterVectorResults"
 
 # "Amazon","BookReviews","Genome","Music","Reviews", "Tiktok","VariousImg","Laion"
-DATASETS = ["Laion"]
+DATASETS = ["Amazon","BookReviews","Genome","Music","Reviews", "Tiktok","VariousImg","Laion"]
 
 # 算法名称到文件夹名称的映射
 ALGO_FOLDERS = {
     'UNG-nTfalse': 'UNG-nTfalse',
-    # 'UNG-nTtrue': 'UNG-nTtrue',
-    'ACORN-gamma': 'ACORN-gamma',
-    # 'ACORN-improved': 'ACORN-gamma-improved',
-    'NaviX': 'NaviX-ACORN',    
-    'pre-filter': 'pre-filter'
+    'UNG-nTtrue': 'UNG-nTtrue',
+    # 'ACORN-gamma': 'ACORN-gamma',
+    # # 'ACORN-improved': 'ACORN-gamma-improved',
+    # 'NaviX': 'NaviX-ACORN',    
+    # 'pre-filter': 'pre-filter'
 }
 
 # 目标召回率
 MIN_RECALL = 0.90
 
 # 统一的输出图片/CSV根目录
-GLOBAL_OUTPUT_DIR = os.path.join(BASE_DIR, "EDA_Plots")
+GLOBAL_OUTPUT_DIR = os.path.join(BASE_DIR, "EDA_Plots_UNGnTtrue")
 os.makedirs(GLOBAL_OUTPUT_DIR, exist_ok=True)
 
 # ==========================================
