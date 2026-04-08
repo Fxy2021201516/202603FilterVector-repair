@@ -18,18 +18,17 @@ DATASETS = ["Amazon","BookReviews","Genome","Music","Reviews", "Tiktok","Various
 # 算法名称到文件夹名称的映射
 ALGO_FOLDERS = {
     'UNG-nTfalse': 'UNG-nTfalse',
-    'UNG-nTtrue': 'UNG-nTtrue',
-    # 'ACORN-gamma': 'ACORN-gamma',
-    # # 'ACORN-improved': 'ACORN-gamma-improved',
-    # 'NaviX': 'NaviX-ACORN',    
-    # 'pre-filter': 'pre-filter'
+    # 'UNG-nTtrue': 'UNG-nTtrue',
+    'ACORN-gamma': 'ACORN-gamma',
+    'NaviX': 'NaviX-ACORN',    
+    'pre-filter': 'pre-filter'
 }
 
 # 目标召回率
 MIN_RECALL = 0.90
 
 # 统一的输出图片/CSV根目录
-GLOBAL_OUTPUT_DIR = os.path.join(BASE_DIR, "EDA_Plots_UNGnTtrue")
+GLOBAL_OUTPUT_DIR = os.path.join(BASE_DIR, "EDA_Plots_try")
 os.makedirs(GLOBAL_OUTPUT_DIR, exist_ok=True)
 
 # ==========================================
@@ -136,7 +135,8 @@ def preprocess_and_align(df_long, dataset_name):
     if feature_source.empty:
         feature_source = df_best
         
-    base_features_cols = ['QueryID', 'QuerySize', 'CandSize', 'ExactCandSize', 'GlobalPpass', 'FeatureT_ms']
+    # base_features_cols = ['QueryID', 'QuerySize', 'CandSize', 'ExactCandSize', 'GlobalPpass', 'FeatureT_ms']
+    base_features_cols = ['QueryID', 'QuerySize', 'CandSize', 'ExactCandSize', 'GlobalPpass', 'TotalCoverage', 'FeatureT_ms']
     existing_base_features = [col for col in base_features_cols if col in feature_source.columns]
     features_df = feature_source[existing_base_features].drop_duplicates(subset=['QueryID']).set_index('QueryID')
     
@@ -159,6 +159,16 @@ def preprocess_and_align(df_long, dataset_name):
         df_extra_clean = df_extra_features.drop(columns=overlap_cols)
         df_final = pd.merge(df_final, df_extra_clean, on='QueryID', how='left')
         print("  [√] 已将附加图拓扑特征成功合并至宽表！")
+        
+    # === 如果 GlobalPpass 为空或为 0，则强制使用 TotalCoverage 兜底 ===
+    if 'TotalCoverage' in df_final.columns:
+        if 'GlobalPpass' in df_final.columns:
+            # 找到 GlobalPpass 为 NaN 或 0 的行
+            mask = df_final['GlobalPpass'].isna() | (df_final['GlobalPpass'] == 0)
+            # 使用 TotalCoverage 对应行的值进行覆盖
+            df_final.loc[mask, 'GlobalPpass'] = df_final.loc[mask, 'TotalCoverage']
+        else:
+            df_final['GlobalPpass'] = df_final['TotalCoverage']
         
     return df_final
 
@@ -610,6 +620,9 @@ def perform_eda(df_final, output_dir):
     plt.savefig(os.path.join(output_dir, "06_ppass_vs_time_scatter.png"), dpi=300, bbox_inches='tight')
     plt.close()
     
+    dataset_name = os.path.basename(os.path.normpath(output_dir))
+    plot_theoretical_proofs(valid_df, output_dir, dataset_name)
+    
     print(f"[√] {os.path.basename(output_dir)} 数据集 EDA 分析及绘图数据导出完成！")
     
 def generate_laion_evidence(df_final, dataset_name):
@@ -711,6 +724,89 @@ def generate_laion_evidence(df_final, dataset_name):
         print(f"  -> 结论: 无论它们排在第几名，它们的底层搜索速度几乎完全一致，同源性确凿无疑。")
     print("="*85 + "\n")
 
+def plot_theoretical_proofs(valid_df, output_dir, dataset_name):
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import os
+
+    print(f"  [*] 正在绘制理论证明图表 (The Cost Bottleneck & Zero-Cost Surrogate)...")
+    
+    # =========================================================
+    # 特征还原：处理宽表化(pivot)导致列名带后缀的问题
+    # =========================================================
+    if 'MinSupersetT_ms' not in valid_df.columns:
+        ung_t_cols = [c for c in valid_df.columns if c.startswith('MinSupersetT_ms_UNG')]
+        any_t_cols = [c for c in valid_df.columns if c.startswith('MinSupersetT_ms_')]
+        if ung_t_cols:
+            valid_df['MinSupersetT_ms'] = valid_df[ung_t_cols[0]]
+        elif any_t_cols:
+            valid_df['MinSupersetT_ms'] = valid_df[any_t_cols[0]]
+
+    required_cols = ['QuerySize', 'CandSize', 'MinSupersetT_ms', 'Fastest_Algo']
+    missing_cols = [col for col in required_cols if col not in valid_df.columns]
+    if missing_cols:
+        print(f"  [Warning] 宽表中缺少特征 {missing_cols}，跳过理论证明绘图。")
+        return
+
+    theory_dir = os.path.join(output_dir, "Theoretical_Proofs")
+    os.makedirs(theory_dir, exist_ok=True)
+    df_plot = valid_df[valid_df['QuerySize'] > 0].copy()
+
+    # =========================================================
+    # 图 1：复杂性灾难 (The Cost Bottleneck) - 为什么我们要抛弃 ELS？
+    # =========================================================
+    plt.figure(figsize=(10, 6))
+    
+    # 限制 QuerySize 的类别数，让图表更清晰
+    top_q_sizes = sorted(df_plot['QuerySize'].unique())[:5] 
+    df_q_filtered = df_plot[df_plot['QuerySize'].isin(top_q_sizes)]
+    
+    sns.scatterplot(data=df_q_filtered, x='CandSize', y='MinSupersetT_ms', 
+                    hue='QuerySize', palette='viridis', alpha=0.7, s=30)
+    
+    plt.xscale('log')
+    plt.yscale('log')
+    plt.title('The Cost Bottleneck: ELS Extraction Time vs. Prior Features', fontsize=14)
+    plt.xlabel('CandSize (|C|) (Log Scale)', fontsize=12)
+    plt.ylabel('ELS Extraction Time (MinSupersetT_ms) (Log Scale)', fontsize=12)
+    plt.legend(title='QuerySize (|Q|)')
+    plt.grid(True, which="both", ls="--", alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(os.path.join(theory_dir, "Proof1_The_Cost_Bottleneck.png"), dpi=300)
+    plt.close()
+
+    # =========================================================
+    # 图 2：零开销代理的决策边界 (Zero-Cost Surrogate Boundary) - 为什么用 Q 和 C 就足够了？
+    # =========================================================
+    plt.figure(figsize=(10, 6))
+    
+    # 提取非 UNG 算法（我们主要想看图算法和暴力过滤的边界）
+    df_surrogate = df_plot[~df_plot['Fastest_Algo'].str.contains('UNG', na=False)].copy()
+    
+    if not df_surrogate.empty:
+        # 给整数的 QuerySize 加一点视觉抖动（Jitter），展现数据点的密集程度
+        noise = np.random.normal(0, 0.15, size=len(df_surrogate))
+        df_surrogate['QuerySize_Jittered'] = df_surrogate['QuerySize'] + noise
+
+        palette = {'ACORN-gamma': 'tab:orange', 'NaviX': 'tab:green', 'pre-filter': 'gold'}
+        valid_palette = {k: v for k, v in palette.items() if k in df_surrogate['Fastest_Algo'].unique()}
+        
+        sns.scatterplot(data=df_surrogate, x='QuerySize_Jittered', y='CandSize', 
+                        hue='Fastest_Algo', palette=valid_palette, alpha=0.7, s=40)
+        
+        plt.yscale('log')
+        plt.title('Zero-Cost Surrogate: Decision Boundaries in (|Q|, |C|) Space', fontsize=14)
+        plt.xlabel('QuerySize (|Q|) (Jittered)', fontsize=12)
+        plt.ylabel('CandSize (|C|) (Log Scale)', fontsize=12)
+        plt.legend(title='Optimal Algorithm', bbox_to_anchor=(1.05, 1), loc='upper left')
+        plt.grid(True, which="major", ls="--", alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(theory_dir, "Proof2_Zero_Cost_Surrogate.png"), dpi=300)
+        plt.close()
+
+    print(f"  [√] 理论证明图表已成功保存至: {theory_dir}")
+
 # ==========================================
 # 主程序
 # ==========================================
@@ -734,8 +830,8 @@ if __name__ == "__main__":
             # 常规 EDA 画图
             perform_eda(df_final, dataset_output_dir)
             
-            # 深度挖掘 Laion 异常现象并打印证据
-            generate_laion_evidence(df_final, dataset)
+            # # 深度挖掘 Laion 异常现象并打印证据
+            # generate_laion_evidence(df_final, dataset)
             
             # 收集合并分析表的数据
             row_data = generate_acorn_family_support_table(df_final, dataset)

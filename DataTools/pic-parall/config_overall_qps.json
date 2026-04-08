@@ -1165,15 +1165,15 @@
                   },
                   "queries_to_compare": [
                      {
-                        "query_dir_name": "query_select_imp_A_B_C-sub-base-123456789",
+                        "query_dir_name": "query_select_pf_A_B_C-sub-base-123456789",
                         "subplot_title": "Amazon\nmixed"
                      },
                      {
-                        "query_dir_name": "query_select_imp_A_B_C-sub-base-123456789/A_B_C-sub-base-123456789_len_large",
+                        "query_dir_name": "query_select_pf_A_B_C-sub-base-123456789/A_B_C-sub-base-123456789_len_large",
                         "subplot_title": "Amazon\nlarge $|L_q|$"
                      },
                      {
-                        "query_dir_name": "query_select_imp_A_B_C-sub-base-123456789/A_B_C-sub-base-123456789_len_small",
+                        "query_dir_name": "query_select_pf_A_B_C-sub-base-123456789/A_B_C-sub-base-123456789_len_small",
                         "subplot_title": "Amazon\nsmall $|L_q|$"
                      }
                   ],
