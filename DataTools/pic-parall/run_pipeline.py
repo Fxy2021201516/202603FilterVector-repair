@@ -60,7 +60,8 @@ def fetch_data_for_subplot(config, dataset_name, base_params, algorithms, cache,
       "pre-filtering": "pre-filter",  
       "NaviX": "NaviX-ACORN",    
       "SmartRoute": "SmartRoute",
-      "FastSmartRoute": "FastSmartRoute"                 
+      "FastSmartRoute": "FastSmartRoute",
+      "SmartRoute-revised": "SmartRoute-revised"                   
    }
    
    if num_queries == 0:

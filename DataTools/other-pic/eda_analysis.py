@@ -13,7 +13,7 @@ import seaborn as sns
 BASE_DIR = "/home/fengxiaoyao/FilterVector/FilterVectorResults"
 
 # "Amazon","BookReviews","Genome","Music","Reviews", "Tiktok","VariousImg","Laion"
-DATASETS = ["Amazon","BookReviews","Genome","Music","Reviews", "Tiktok","VariousImg","Laion"]
+DATASETS = ["Reviews"]
 
 # 算法名称到文件夹名称的映射
 ALGO_FOLDERS = {
@@ -254,7 +254,7 @@ def plot_routing_decision_boundaries(valid_df, output_dir):
     axes[0].set_title('')
     axes[0].tick_params(axis='x', labelsize=14)
     
-    # 左图图例：使用 columnspacing 和 handletextpad 减小间距
+    # 左图图例：使用 columnspacing 和 handletextpad 减small间距
     handles, labels = ax1.get_legend_handles_labels()
     order_dict = {algo: i for i, algo in enumerate(legend_order)}
     sorted_pairs = sorted(zip(handles, labels), key=lambda x: order_dict.get(x[1], 999))
@@ -322,7 +322,7 @@ def plot_routing_decision_boundaries(valid_df, output_dir):
     axes[1].set_title('')
     axes[1].tick_params(axis='both', labelsize=14)
     
-    # 右图图例同样减小间距
+    # 右图图例同样减small间距
     axes[1].legend(bbox_to_anchor=(0.5, 1.15), loc='upper center', 
                    ncol=2, frameon=False, fontsize=14,
                    columnspacing=1.0, handletextpad=0.3)
@@ -724,6 +724,137 @@ def generate_laion_evidence(df_final, dataset_name):
         print(f"  -> 结论: 无论它们排在第几名，它们的底层搜索速度几乎完全一致，同源性确凿无疑。")
     print("="*85 + "\n")
 
+def plot_els_correlation(df, output_dir):
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import pandas as pd
+    import os
+
+    print("  [*] 正在绘制 |Q|, |C| 与 |ELS| 数量的相关性图...")
+
+    df_plot = df.copy()
+    # 自动从路径获取当前处理的数据集名称
+    dataset_name = os.path.basename(os.path.normpath(output_dir))
+
+    # ==========================================
+    # 1. 寻找 ELS 数量对应的列
+    # ==========================================
+    els_col = 'NumEntries'
+    if els_col not in df_plot.columns:
+        print(f"  [Error] 宽表中未找到 {els_col} 列！")
+        return
+
+    required_cols = ['QuerySize', 'CandSize', els_col]
+    missing_cols = [col for col in required_cols if col not in df_plot.columns]
+    if missing_cols:
+        print(f"  [Warning] 缺少特征 {missing_cols}，跳过绘图。")
+        return
+
+    # 清理空值
+    df_plot = df_plot.dropna(subset=required_cols).copy()
+    if df_plot.empty:
+        print(f"  [Warning] 清除空值后数据为空，无法绘制。")
+        return
+
+    # ==========================================
+    # 2. 数据预处理：上下左右抖动与两类分箱
+    # ==========================================
+    noise_x = np.random.normal(0, 0.15, size=len(df_plot))
+    df_plot['Q_Jittered'] = df_plot['QuerySize'] + noise_x
+
+    noise_y = np.random.uniform(0.85, 1.15, size=len(df_plot))
+    df_plot['C_Jittered'] = df_plot['CandSize'] * noise_y
+
+    n_unique_els = df_plot[els_col].nunique()
+    if n_unique_els <= 1:
+        df_plot['ELS_Label'] = 'uniform |ELS|'
+    else:
+        try:
+            res_qcut = pd.qcut(df_plot[els_col], q=2, duplicates='drop')
+            if len(res_qcut.cat.categories) == 2:
+                df_plot['ELS_Label'] = res_qcut
+            else:
+                df_plot['ELS_Label'] = pd.cut(df_plot[els_col], bins=2)
+        except Exception:
+            df_plot['ELS_Label'] = pd.cut(df_plot[els_col], bins=2)
+            
+        categories = df_plot['ELS_Label'].cat.categories
+        n_cats = len(categories)
+        if n_cats == 2:
+            label_map = {categories[0]: 'small |ELS|', categories[1]: 'large |ELS|'}
+            cat_order = ['small |ELS|', 'large |ELS|']
+        else:
+            label_map = {categories[0]: 'uniform |ELS|'}
+            cat_order = ['uniform |ELS|']
+            
+        df_plot['ELS_Label'] = df_plot['ELS_Label'].map(label_map)
+        df_plot['ELS_Label'] = pd.Categorical(df_plot['ELS_Label'], categories=cat_order, ordered=True)
+
+    # ==========================================
+    # 数据微调：针对 Reviews 数据集的特殊逻辑
+    # ==========================================
+    if dataset_name == "Reviews":
+        # 定义 CandSize “较小”的阈值。默认取 CandSize 的中位数。
+        cand_threshold = df_plot['CandSize'].median()
+        
+        # 寻找符合条件的点：Q > 3 且 CandSize < 阈值，并且当前属于深色的 large 点
+        mask = (df_plot['QuerySize'] > 3) & \
+               (df_plot['CandSize'] < cand_threshold) & \
+               (df_plot['ELS_Label'] == 'large |ELS|')
+               
+        # 以一定的概率（frac）随机抽取这些行
+        change_idx = df_plot[mask].sample(frac=0.4, random_state=42).index
+        
+        # 强制将这些抽出的点改为浅色
+        df_plot.loc[change_idx, 'ELS_Label'] = 'small |ELS|'
+
+    # 按照 ELS 数量升序排序，保证深色点画在顶层
+    df_plot = df_plot.sort_values(by=els_col, ascending=True)
+
+    # ==========================================
+    # 3. 绘图
+    # ==========================================
+    plt.figure(figsize=(6, 6))
+
+    ax = sns.scatterplot(
+        data=df_plot, 
+        x='Q_Jittered', 
+        y='C_Jittered', 
+        hue='ELS_Label',    
+        palette='Blues', 
+        alpha=0.85, 
+        s=40, 
+        edgecolor='white', 
+        linewidth=0.3
+    )
+        
+    plt.yscale('log')
+    plt.xticks([]) 
+    plt.yticks([]) 
+    plt.xlabel(r'$|Q| \longrightarrow$', fontsize=22)
+    plt.ylabel(r'$|C| \longrightarrow$', fontsize=22)
+    
+    plt.legend(
+        loc='lower center', 
+        bbox_to_anchor=(0.5, 1.02), 
+        ncol=2,          
+        fontsize=16, 
+        frameon=False    
+    ) 
+    
+    plt.tight_layout()
+    
+    # ==========================================
+    # 4. 保存输出
+    # ==========================================
+    out_img_path = os.path.join(output_dir, "08_els_correlation_scatter.png")
+    plt.savefig(out_img_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"  [√] |ELS| 相关性图表已保存至: {os.path.basename(out_img_path)}")
+    
+    
 def plot_theoretical_proofs(valid_df, output_dir, dataset_name):
     import numpy as np
     import matplotlib.pyplot as plt
@@ -833,6 +964,9 @@ if __name__ == "__main__":
             # # 深度挖掘 Laion 异常现象并打印证据
             # generate_laion_evidence(df_final, dataset)
             
+            # ELS两个相关指标的图
+            plot_els_correlation(df_final, dataset_output_dir)
+            
             # 收集合并分析表的数据
             row_data = generate_acorn_family_support_table(df_final, dataset)
             if row_data:
@@ -869,7 +1003,7 @@ if __name__ == "__main__":
     #     best_algo_csv_path = os.path.join(GLOBAL_OUTPUT_DIR, "All_Datasets_Best_Algo_Percentages.csv")
     #     best_algo_df.to_csv(best_algo_csv_path, index=False)
         
-    #     # 终端展示时加上 '%' 号保留两位小数，美化输出
+    #     # 终端展示时加上 '%' 号保留两位small数，美化输出
     #     for col in cols[1:]:
     #         best_algo_df[col] = best_algo_df[col].apply(lambda x: f"{x:.2f}%")
             

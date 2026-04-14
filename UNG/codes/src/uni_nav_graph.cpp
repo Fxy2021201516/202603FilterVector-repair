@@ -2595,6 +2595,14 @@ namespace ANNS
          _fast_route_single_selector->predict(dummy4);
          std::cout << "- Fast Route Single Selector is warm." << std::endl;
       }
+
+      // --- 预热 Smartroute-revised 路由 (2个特征) ---
+      if (_fast_route_revised_selector) {
+         std::cout << "- Warming up Smartroute-revised Selector..." << std::endl;
+         std::vector<float> dummy2(2, 0.0f);
+         _fast_route_revised_selector->predict(dummy2);
+         std::cout << "- Smartroute-revised Selector is warm." << std::endl;
+      }
    }
 
    // fxy_add
@@ -3257,6 +3265,89 @@ void UniNavGraph::calculate_query_features_only(
          
          return use_nT_true ? 1 : 0; 
       }
+      
+      // --- 模式 4: Smartroute-revised (2特征, 延迟计算 ELS) ---
+      if (routing_mode == 4) {
+         stats.is_trie_recursive = false;
+
+         // 1. Fpass: 像 SmartRoute 一样使用 Bitset 计算 Descendants
+         auto start_fpass = std::chrono::high_resolution_clock::now();
+         static thread_local std::unique_ptr<std::bitset<12000000>> final_group_bitmap_ptr;
+         static thread_local std::unique_ptr<std::bitset<12000000>> temp_group_bitmap_ptr;
+         if (!final_group_bitmap_ptr) final_group_bitmap_ptr = std::make_unique<std::bitset<12000000>>();
+         if (!temp_group_bitmap_ptr) temp_group_bitmap_ptr = std::make_unique<std::bitset<12000000>>();
+         auto& final_group_bitmap = *final_group_bitmap_ptr;
+         auto& temp_group_bitmap = *temp_group_bitmap_ptr;
+
+         size_t count2 = 0;
+         if (query_labels.empty()) {
+             count2 = _num_groups;
+         } else {
+             std::vector<const std::vector<IdxType>*> valid_lists;
+             valid_lists.reserve(query_labels.size());
+             bool is_valid = true;
+
+             if (_group_attr_adj_list.empty()) {
+                 std::cerr << "\n[FATAL ERROR] _group_attr_adj_list is empty!" << std::endl;
+                 exit(-1);
+             }
+
+             for (LabelType attr_label : query_labels) {
+                 auto it = _attr_to_id.find(attr_label);
+                 if (it == _attr_to_id.end()) { is_valid = false; break; }
+                 AtrType mapped_id = it->second;
+                 if (mapped_id < _group_attr_adj_list.size()) {
+                     valid_lists.push_back(&_group_attr_adj_list[mapped_id]);
+                 } else {
+                     is_valid = false; break;
+                 }
+             }
+
+             if (is_valid) {
+                 std::sort(valid_lists.begin(), valid_lists.end(),
+                     [](const std::vector<IdxType>* a, const std::vector<IdxType>* b) { return a->size() < b->size(); });
+                 final_group_bitmap.reset();
+                 const auto& first_list = *valid_lists[0];
+                 for (IdxType gid : first_list) final_group_bitmap.set(gid);
+                 for (size_t i = 1; i < valid_lists.size(); ++i) {
+                     if (final_group_bitmap.none()) break; 
+                     const auto& vec_list = *valid_lists[i];
+                     for (IdxType gid : vec_list) temp_group_bitmap.set(gid);
+                     final_group_bitmap &= temp_group_bitmap;
+                     for (IdxType gid : vec_list) temp_group_bitmap.reset(gid);
+                 }
+                 count2 = final_group_bitmap.count();
+             }
+         }
+         stats.fpass_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_fpass).count();
+         stats.num_lng_descendants = count2;
+
+         // 2. 开始预测 (仅输入 f_ppass 和 num_descendants)
+         auto pred_start = std::chrono::high_resolution_clock::now();
+         int router_decision = 0; 
+         if (_fast_route_revised_selector) {
+             std::vector<float> features = {f_ppass, static_cast<float>(count2)};
+             float pred_val = _fast_route_revised_selector->predict(features);
+             router_decision = static_cast<int>(std::round(pred_val));
+         }
+         stats.route_pred_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - pred_start).count();
+
+         // 3. Early Return: 非 UNG 类直接短路返回，不计算 ELS
+         if (router_decision == 2) return 5; // 走向 pre-filter
+         if (router_decision == 1) return _revised_majority_acorn_id; // 走向 ACORN 多数派
+
+         // 4. 如果预测为 0 (UNG_family)，再计算 ELS。默认使用 nTfalse
+         auto els_start = std::chrono::high_resolution_clock::now();
+         static std::atomic<int> counter{0};
+         get_min_super_sets_debug(query_labels, entry_group_ids, false, true, counter, false, is_rec_more_start, stats, false);
+         stats.get_min_super_sets_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - els_start).count();
+         stats.num_entry_points = entry_group_ids.size();
+         
+         return 0; 
+      }
+      
+      
+      
       return 0; // Fallback
    }
    
@@ -3312,8 +3403,8 @@ void UniNavGraph::calculate_query_features_only(
 
          stats.bitmap_time_ms = 0.0; 
 
-         if (routing_mode == 1 || (routing_mode == 0 && baseline_alg == 5)) {
-            // Mode 1 或 原版 pre-filter：使用 Bitset
+         if (routing_mode == 1 || routing_mode == 4 || (routing_mode == 0 && baseline_alg == 5)) {
+            // Mode 1 或 Mode 4 或原版 pre-filter：使用 Bitset
             auto mask_start = std::chrono::high_resolution_clock::now(); 
             exact_mask_ptr = &get_exact_cand_size_and_mask(query_labels, stats.exact_cand_size);
             stats.bitmap_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - mask_start).count(); 
@@ -4377,6 +4468,25 @@ void UniNavGraph::calculate_query_features_only(
          }
       } else {
          _fast_route_single_selector = nullptr;
+      }
+
+      // --- 加载 Smartroute-revised 模型 (2特征) ---
+      std::string fsr_revised_model_path = selector_modle_prefix + "/fast_smart_revised_route/router.onnx";
+      if (fs::exists(fsr_revised_model_path)) {
+         _fast_route_revised_selector = std::make_unique<MethodSelector>(fsr_revised_model_path);
+         std::cout << "- Smartroute-revised Model loaded." << std::endl;
+
+         std::string revised_majority_id_path = selector_modle_prefix + "/fast_smart_revised_route/majority_acorn_id.txt";
+         if (fs::exists(revised_majority_id_path)) {
+             std::ifstream infile(revised_majority_id_path);
+             if (infile >> _revised_majority_acorn_id) {
+                 std::cout << "- Smartroute-revised majority ACORN ID loaded: " << _revised_majority_acorn_id << std::endl;
+             }
+         } else {
+             std::cout << "- [Warning] majority_acorn_id.txt not found, using default: " << _revised_majority_acorn_id << std::endl;
+         }
+      } else {
+         _fast_route_revised_selector = nullptr;
       }
 
       // === load ACORN index ===

@@ -7,37 +7,37 @@ echo "=== 开始执行实验... ==="
 # cd /home/fengxiaoyao/FilterVector/FilterVectorCode
 # ./exp.sh experiment_json/experiments-Reviews-1-2.json
 
-echo "$(date): [步骤 0] 运行 experiments-Amazon-pf-mixed-len..."
+echo "$(date): [步骤 0] 运行 experiments-Amazon-SmartRoute_reviesd-small-efs..."
 cd /home/fengxiaoyao/FilterVector/FilterVectorCode
-./exp.sh experiment_json/202603-pf-mixed-len/experiments-Amazon-pf-mixed-len.json > output.log
+./exp.sh experiment_json/202603-SmartRoute_reviesd-small-efs/experiments-Amazon-SmartRoute_reviesd-small-efs.json > output.log
 
-echo "$(date): [步骤 1] 运行 experiments-BookReviews-pf-mixed-len..."
+echo "$(date): [步骤 1] 运行 experiments-BookReviews-SmartRoute_reviesd-small-efs..."
 cd /home/fengxiaoyao/FilterVector/FilterVectorCode
-./exp.sh experiment_json/202603-pf-mixed-len/experiments-BookReviews-pf-mixed-len.json > output.log
+./exp.sh experiment_json/202603-SmartRoute_reviesd-small-efs/experiments-BookReviews-SmartRoute_reviesd-small-efs.json > output.log
 
-echo "$(date): [步骤 2] 运行 experiments-Genome-pf-mixed-len..."
+echo "$(date): [步骤 2] 运行 experiments-Genome-SmartRoute_reviesd-small-efs..."
 cd /home/fengxiaoyao/FilterVector/FilterVectorCode
-./exp.sh experiment_json/202603-pf-mixed-len/experiments-Genome-pf-mixed-len.json > output.log
+./exp.sh experiment_json/202603-SmartRoute_reviesd-small-efs/experiments-Genome-SmartRoute_reviesd-small-efs.json > output.log
 
-echo "$(date): [步骤 3] 运行 experiments-Music-pf-mixed-len..."
+echo "$(date): [步骤 3] 运行 experiments-Music-SmartRoute_reviesd-small-efs..."
 cd /home/fengxiaoyao/FilterVector/FilterVectorCode
-./exp.sh experiment_json/202603-pf-mixed-len/experiments-Music-pf-mixed-len.json > output.log
+./exp.sh experiment_json/202603-SmartRoute_reviesd-small-efs/experiments-Music-SmartRoute_reviesd-small-efs.json > output.log
 
-echo "$(date): [步骤 4] 运行 experiments-Reviews-pf-mixed-len..."
+echo "$(date): [步骤 4] 运行 experiments-Reviews-SmartRoute_reviesd-small-efs..."
 cd /home/fengxiaoyao/FilterVector/FilterVectorCode
-./exp.sh experiment_json/202603-pf-mixed-len/experiments-Reviews-pf-mixed-len.json > output.log
+./exp.sh experiment_json/202603-SmartRoute_reviesd-small-efs/experiments-Reviews-SmartRoute_reviesd-small-efs.json > output.log
 
-echo "$(date): [步骤 5] 运行 experiments-Tiktok-pf-mixed-len..."
+echo "$(date): [步骤 5] 运行 experiments-Tiktok-SmartRoute_reviesd-small-efs..."
 cd /home/fengxiaoyao/FilterVector/FilterVectorCode
-./exp.sh experiment_json/202603-pf-mixed-len/experiments-Tiktok-pf-mixed-len.json > output.log
+./exp.sh experiment_json/202603-SmartRoute_reviesd-small-efs/experiments-Tiktok-SmartRoute_reviesd-small-efs.json > output.log
 
-echo "$(date): [步骤 6] 运行 experiments-VariousImg-pf-mixed-len..."
+echo "$(date): [步骤 6] 运行 experiments-VariousImg-SmartRoute_reviesd-small-efs..."
 cd /home/fengxiaoyao/FilterVector/FilterVectorCode
-./exp.sh experiment_json/202603-pf-mixed-len/experiments-VariousImg-pf-mixed-len.json > output.log
+./exp.sh experiment_json/202603-SmartRoute_reviesd-small-efs/experiments-VariousImg-SmartRoute_reviesd-small-efs.json > output.log
 
-echo "$(date): [步骤 7] 运行 experiments-Laion-pf-mixed-len..."
+echo "$(date): [步骤 7] 运行 experiments-Laion-SmartRoute_reviesd-small-efs..."
 cd /home/fengxiaoyao/FilterVector/FilterVectorCode
-./exp.sh experiment_json/202603-pf-mixed-len/experiments-Laion-pf-mixed-len.json > output.log
+./exp.sh experiment_json/202603-SmartRoute_reviesd-small-efs/experiments-Laion-SmartRoute_reviesd-small-efs.json > output.log
 
 
 

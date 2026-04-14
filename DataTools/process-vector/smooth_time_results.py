@@ -11,7 +11,7 @@ BASE_ROOT = "/home/fengxiaoyao/FilterVector/FilterVectorResults"
 DATASETS = ["Amazon","BookReviews","Genome","Music","Reviews", "Tiktok","VariousImg","Laion"]
 
 # 需要处理的算法列表 
-ALGORITHMS = ["FastSmartRoute","FastSmartRoute+"]#"UNG-nTfalse",  "method3", "ACORN-gamma-improved","ACORN-gamma","ACORN-1","SmartRoute","NaviX-ACORN","pre-filter"
+ALGORITHMS = ["SmartRoute-revised"]#"UNG-nTfalse","ACORN-gamma","ACORN-1","NaviX-ACORN","pre-filter","SmartRoute","FastSmartRoute","FastSmartRoute+"
 
 # 文件名常量
 FILE_NAME = "search_time_summary.csv"
