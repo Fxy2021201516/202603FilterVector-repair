@@ -52,6 +52,12 @@ namespace ANNS
       size_t successful_checks = 0;
       float shortcut_hit_ratio = 0.0f;
       long long redundant_upward_steps = 0; // 向上回溯过程中重复的节点
+      
+        long long m1_upward_traversals = 0;
+        long long m1_bfs_nodes = 0;
+        double m1_time_phase1_ms = 0.0;
+        double m1_time_phase2_ms = 0.0;
+
       // 方法二相关
       size_t recursive_calls = 0;
       size_t pruning_events = 0;
@@ -150,7 +156,8 @@ namespace ANNS
                          int lsearch_start, int lsearch_step,
                          int efs_start, int efs_step_slow,int efs_step_fast,int lsearch_threshold, 
                          int routing_mode, int baseline_alg, faiss_navix::IndexHNSWFlat* navix_index = nullptr,
-                         const std::vector<IdxType> &true_query_group_ids = {}); // 包含每个查询其真实来源组ID的向量
+                         const std::vector<IdxType> &true_query_group_ids = {},// 包含每个查询其真实来源组ID的向量
+                         const std::vector<int>& query_algo_choices = {}); 
 
       // I/O
       void save(std::string index_path_prefix, std::string results_path_prefix);
@@ -300,6 +307,10 @@ namespace ANNS
     void build_group_inverted_indices();// 构建倒排索引
     void evaluate_fpass_methods(std::shared_ptr<IStorage> query_storage, const std::string& output_csv_path);// 执行 5 种 Fpass 计算方法的 Benchmark
 
+    std::vector<int> load_query_algo_choices_from_csv(
+    const std::string &csv_path,
+    size_t expected_num_queries) const;
+
    private:
 
       void thread_function(std::queue<int>& Qid_595,std::shared_ptr<IStorage> &query_storage,
@@ -315,7 +326,7 @@ namespace ANNS
                                    int efs_start, int efs_step_slow,int efs_step_fast,int lsearch_threshold,
                                    int routing_mode,int baseline_alg, IdxType num_queries, 
                                    faiss_navix::IndexHNSWFlat* navix_index,
-                                   const std::vector<IdxType> &true_query_group_ids);
+                                   const std::vector<IdxType> &true_query_group_ids,const std::vector<int> &query_algo_choices);
       size_t get_candidate_count_for_label(LabelType label) const;
       // data
       std::shared_ptr<IStorage> _base_storage,

@@ -148,6 +148,8 @@ namespace ANNS
       auto function_start_time = std::chrono::high_resolution_clock::now();
       double time_candidate_gen = 0.0;
       double time_bfs = 0.0;
+      metrics.time_phase1_ms = time_candidate_gen;
+      metrics.time_phase2_ms = time_bfs;
 #endif
       long long initial_candidates_from_map = 0;
       long long examine_containment_calls = 0;
@@ -262,10 +264,12 @@ namespace ANNS
       time_bfs = std::chrono::duration<double, std::milli>(end_bfs - start_bfs).count();
 #endif
 
+      metrics.time_phase1_ms = time_candidate_gen;
+      metrics.time_phase2_ms = time_bfs;
       metrics.bfs_nodes_processed = bfs_nodes_processed;
 
 #if ENABLE_TRIE_DEBUG_OUTPUT
-      // --- 4. 使用原子计数器控制打印次数 ---
+      /*// --- 4. 使用原子计数器控制打印次数 ---
       if (print_counter.fetch_add(1, std::memory_order_relaxed) < 10) // 2. 使用原子计数器
       {
 #pragma omp critical
@@ -291,7 +295,7 @@ namespace ANNS
                       << "--------------------------------------------------\n"
                       << std::endl;
          }
-      }
+      }*/
 #endif
    }
 

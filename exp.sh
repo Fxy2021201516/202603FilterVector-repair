@@ -88,31 +88,6 @@ cat "$CONFIG_FILE" | jq -c '.experiments[]' | while read -r dataset_config; do
 
             # 根据算法名称设置详细参数
             case "$ALGORITHM_NAME" in
-                # "SmartRoute" | "method3")
-                #     FORCE_USE_ALG=0; IS_IDEA2_AVAILABLE=true; IS_NEW_TRIE_METHOD=true; IS_REC_MORE_START=true; ACORN_SEARCH_ALGO=0; IS_NAIVE_ROUTING=false;;
-                # "NaiveRoute")        
-                #     FORCE_USE_ALG=0; IS_IDEA2_AVAILABLE=true; IS_NEW_TRIE_METHOD=true; IS_REC_MORE_START=true; ACORN_SEARCH_ALGO=0; IS_NAIVE_ROUTING=true;;
-                # "method1")
-                #     FORCE_USE_ALG=0; IS_IDEA2_AVAILABLE=false; IS_NEW_TRIE_METHOD=true; IS_REC_MORE_START=true; ACORN_SEARCH_ALGO=0; IS_NAIVE_ROUTING=false;;
-                # "method2")
-                #     FORCE_USE_ALG=0; IS_IDEA2_AVAILABLE=true; IS_NEW_TRIE_METHOD=false; IS_REC_MORE_START=false; ACORN_SEARCH_ALGO=0; IS_NAIVE_ROUTING=false;;
-                # "UNG-nTfalse")
-                #     FORCE_USE_ALG=1; IS_IDEA2_AVAILABLE=false; IS_NEW_TRIE_METHOD=false; IS_REC_MORE_START=false; ACORN_SEARCH_ALGO=0; IS_NAIVE_ROUTING=false;;
-                # "UNG-nTtrue")
-                #     FORCE_USE_ALG=2; IS_IDEA2_AVAILABLE=false; IS_NEW_TRIE_METHOD=false; IS_REC_MORE_START=false; ACORN_SEARCH_ALGO=0; IS_NAIVE_ROUTING=false;;
-                # "ACORN-gamma")
-                #     FORCE_USE_ALG=3; IS_IDEA2_AVAILABLE=false; IS_NEW_TRIE_METHOD=false; IS_REC_MORE_START=false; ACORN_SEARCH_ALGO=0; IS_NAIVE_ROUTING=false;;
-                # "ACORN-1")
-                #     FORCE_USE_ALG=4; IS_IDEA2_AVAILABLE=false; IS_NEW_TRIE_METHOD=false; IS_REC_MORE_START=false; ACORN_SEARCH_ALGO=0; IS_NAIVE_ROUTING=false;;
-                # "ACORN-gamma-improved") # FORCE_USE_ALG 依然是 3 (走 ACORN 逻辑)，但 ACORN_SEARCH_ALGO 设为 1 (Improved/全图探索)
-                #     FORCE_USE_ALG=3; IS_IDEA2_AVAILABLE=false; IS_NEW_TRIE_METHOD=false; IS_REC_MORE_START=false; ACORN_SEARCH_ALGO=1; IS_NAIVE_ROUTING=false;;
-                # "NaviX-ACORN") # 在 ACORN 索引上执行 NaviX 自适应路由
-                #     FORCE_USE_ALG=3; IS_IDEA2_AVAILABLE=false; IS_NEW_TRIE_METHOD=false; IS_REC_MORE_START=false; ACORN_SEARCH_ALGO=2; IS_NAIVE_ROUTING=false;;
-                # "pre-filter")
-                #     FORCE_USE_ALG=5; IS_IDEA2_AVAILABLE=false; IS_NEW_TRIE_METHOD=false; IS_REC_MORE_START=false; ACORN_SEARCH_ALGO=0; IS_NAIVE_ROUTING=false;;
-                # "NaviX")  # FORCE_USE_ALG=6 走完全独立的 NaviX 老索引对照组
-                #     FORCE_USE_ALG=6; IS_IDEA2_AVAILABLE=false; IS_NEW_TRIE_METHOD=false; IS_REC_MORE_START=false; ACORN_SEARCH_ALGO=0; IS_NAIVE_ROUTING=false;;
-                # *)
                 "UNG-nTfalse")    ROUTING_MODE=0; BASELINE_ALG=0 ; IS_REC_MORE_START=false;;
                 "UNG-nTtrue")     ROUTING_MODE=0; BASELINE_ALG=1 ; IS_REC_MORE_START=false;;
                 "ACORN-gamma")    ROUTING_MODE=0; BASELINE_ALG=2 ; IS_REC_MORE_START=false;;

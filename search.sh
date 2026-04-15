@@ -96,7 +96,8 @@ echo "结果将保存到: $RESULT_OUTPUT_DIR"
     --lsearch_step "$LSEARCH_STEP" \
     --efs_start "$EFS_START" \
     --efs_step_slow "$EFS_STEP_SLOW" --efs_step_fast "$EFS_STEP_FAST" --lsearch_threshold "$LSEARCH_THRESHOLD" \
-    --navix_index_path "$INDEX_PATH/navix_output/hnsw_base.index" > "$RESULT_OUTPUT_DIR/others/${DATASET}_search_output.txt" 2>&1
+    --navix_index_path "$INDEX_PATH/navix_output/hnsw_base.index" \
+    --algo_choice_csv "$QUERY_DIR/algo_choice_repeat.csv" > "$RESULT_OUTPUT_DIR/others/${DATASET}_search_output.txt" 2>&1
 
 # --- Step 7: 后处理，计算各指标全局平均值 ---
 echo "正在计算所有 Query 指标的全局平均值..."

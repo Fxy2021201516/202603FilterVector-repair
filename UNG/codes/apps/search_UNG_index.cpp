@@ -116,6 +116,7 @@ int main(int argc, char **argv)
    int lsearch_start, lsearch_step;
    int efs_start, efs_step_slow, efs_step_fast, lsearch_threshold;
    std::string dataset; 
+   std::string algo_choice_csv_path;
 
    try
    {
@@ -182,6 +183,9 @@ int main(int argc, char **argv)
 
       // NaviX
       desc.add_options()("navix_index_path", po::value<std::string>(&navix_index_path)->default_value(""), "Path to NaviX index");
+
+      desc.add_options()("algo_choice_csv", po::value<std::string>(&algo_choice_csv_path)->default_value(""),
+                   "Optional CSV path for per-query algorithm override. Format: QueryID,Algo_Choice");
 
 
 
@@ -259,6 +263,7 @@ int main(int argc, char **argv)
    auto gt = new std::pair<ANNS::IdxType, float>[num_queries * K];
    ANNS::load_gt_file(gt_file, gt, num_queries, K);
    auto results = new std::pair<ANNS::IdxType, float>[num_queries * K];
+   std::vector<int> query_algo_choices = index.load_query_algo_choices_from_csv(algo_choice_csv_path, num_queries);
 
 //    // 为所有查询预先计算并存储入口组ID
 //    std::cout << "\n--- Step 1: Pre-computing Entry Group IDs (Measuring Entry Cost) ---" << std::endl;
@@ -383,7 +388,7 @@ int main(int argc, char **argv)
          else
          {
             index.search_hybrid(query_storage, distance_handler, num_threads, current_Lsearch,
-                                num_entry_points, scenario, K, results, num_cmps, query_stats[repeat][LsearchId],is_new_trie_method, is_rec_more_start, is_ung_more_entry, lsearch_start, lsearch_step, efs_start, efs_step_slow,efs_step_fast,lsearch_threshold,routing_mode, baseline_alg ,navix_index, true_query_group_ids);
+                                num_entry_points, scenario, K, results, num_cmps, query_stats[repeat][LsearchId],is_new_trie_method, is_rec_more_start, is_ung_more_entry, lsearch_start, lsearch_step, efs_start, efs_step_slow,efs_step_fast,lsearch_threshold,routing_mode, baseline_alg ,navix_index, true_query_group_ids,query_algo_choices);
          }
          auto time_cost = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
          
@@ -529,7 +534,8 @@ int main(int argc, char **argv)
             //   << "MinSupersetT_ms,IntelELS_PredT_ms,Route_PredT_ms,Routing_TotalT_ms,BitmapT_new_ms,FeatureT_ms," 
               << "AcornFilterType,"
               << "QuerySize,CandSize,ExactCandSize,GlobalPpass,"
-              << "NumEntries,NumDescendants"
+              << "NumEntries,NumDescendants,"
+              << "M1_Phase1_T,M1_Phase2_T,M1_UpwardNodes,M1_BFSNodes,M1_RedundantUpward"
               << "\n";
    for (int repeat = 0; repeat < num_repeats; repeat++)
    {
@@ -565,7 +571,12 @@ int main(int argc, char **argv)
                        << stats.exact_cand_size << ","  
                        << stats.global_p_pass << ","
                        << stats.num_entry_points << ","
-                       << stats.num_lng_descendants <<"\n";
+                       << stats.num_lng_descendants <<","
+                       << stats.m1_time_phase1_ms << ","
+                       << stats.m1_time_phase2_ms << ","
+                       << stats.m1_upward_traversals << ","
+                       << stats.m1_bfs_nodes << ","
+                       << stats.redundant_upward_steps << "\n";
          }
       }
    }

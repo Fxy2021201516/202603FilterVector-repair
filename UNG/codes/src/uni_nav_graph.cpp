@@ -307,6 +307,12 @@ namespace ANNS
          stats.successful_checks = trie_metrics_m1.successful_checks;
          stats.trie_nodes_traversed = trie_metrics_m1.upward_traversals + trie_metrics_m1.bfs_nodes_processed;
          stats.redundant_upward_steps = trie_metrics_m1.redundant_upward_steps;
+
+         stats.m1_upward_traversals = trie_metrics_m1.upward_traversals;
+         stats.m1_bfs_nodes = trie_metrics_m1.bfs_nodes_processed;
+         stats.m1_time_phase1_ms = trie_metrics_m1.time_phase1_ms;
+         stats.m1_time_phase2_ms = trie_metrics_m1.time_phase2_ms;
+         
          if (stats.candidate_set_size > 0)
             stats.shortcut_hit_ratio = static_cast<float>(stats.successful_checks) / stats.candidate_set_size;
          else
@@ -3070,6 +3076,50 @@ void UniNavGraph::calculate_query_features_only(
 // ======================end: 计算Fpass======================
 
    //fxy_add
+   std::vector<int> UniNavGraph::load_query_algo_choices_from_csv(
+      const std::string &csv_path,
+      size_t expected_num_queries) const
+   {
+      std::vector<int> query_algo_choices(expected_num_queries, -1);
+      if (csv_path.empty()) return query_algo_choices;
+
+      std::ifstream infile(csv_path);
+      if (!infile.is_open()) {
+         std::cerr << "[Warning] Failed to open algo choice csv: " << csv_path << ". Fallback to original routing." << std::endl;
+         return query_algo_choices;
+      }
+
+      std::string line;
+      bool header_checked = false;
+      size_t loaded_rows = 0;
+      while (std::getline(infile, line)) {
+         if (line.empty() || line == "\r") continue;
+         if (!line.empty() && line.back() == '\r') line.pop_back();
+
+         if (!header_checked) {
+            header_checked = true;
+            if (line == "Index,Algo_Choice") continue;
+         }
+
+         std::stringstream ss(line);
+         std::string query_id_str, algo_choice_str;
+         if (std::getline(ss, query_id_str, ',') && std::getline(ss, algo_choice_str)) {
+            try {
+               long long qid_ll = std::stoll(query_id_str);
+               long long algo_ll = std::stoll(algo_choice_str);
+               if (qid_ll >= 0 && static_cast<size_t>(qid_ll) < expected_num_queries) {
+                  query_algo_choices[static_cast<size_t>(qid_ll)] = static_cast<int>(algo_ll);
+                  loaded_rows++;
+               }
+            } catch (...) {}
+         }
+      }
+      std::cout << "[Info] Loaded query algo choices from CSV: " << csv_path << " | loaded=" << loaded_rows << std::endl;
+      return query_algo_choices;
+   }
+
+
+   //fxy_add
    int UniNavGraph::determine_routing_strategy(
       int routing_mode, 
       int baseline_alg,
@@ -3365,7 +3415,7 @@ void UniNavGraph::calculate_query_features_only(
                                    int lsearch_start, int lsearch_step,
                                    int efs_start, int efs_step_slow,int efs_step_fast,int lsearch_threshold,
                                    int routing_mode, int baseline_alg, IdxType num_queries, faiss_navix::IndexHNSWFlat* navix_index,
-                                   const std::vector<IdxType> &true_query_group_ids){
+                                   const std::vector<IdxType> &true_query_group_ids,const std::vector<int> &query_algo_choices){
          omp_set_num_threads(1);
 
          lock_m.lock();
@@ -3468,10 +3518,110 @@ void UniNavGraph::calculate_query_features_only(
          stats.feature_extract_time_ms = total_feature_time - stats.bitmap_time_ms;// 特征提取时间 = 总耗时 - Bitmap构建耗时
 
          // 调用路由策略并获取 final_algo_choice 和 entry_group_ids
+         // std::vector<IdxType> entry_group_ids;
+         // int final_algo_choice = determine_routing_strategy(routing_mode, baseline_alg, query_labels, stats, entry_group_ids, is_new_trie_method, is_rec_more_start);
+         // stats.algo_choice = final_algo_choice;
+         // stats.routing_total_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - decision_start_time).count();
+         
+         // =========================================================================
+         // 算法分配与强制接管 (Override)
+         // =========================================================================
          std::vector<IdxType> entry_group_ids;
-         int final_algo_choice = determine_routing_strategy(routing_mode, baseline_alg, query_labels, stats, entry_group_ids, is_new_trie_method, is_rec_more_start);
+         int final_algo_choice = -1;
+
+         // 1. 检查是否需要强制分配算法
+         bool has_override = (routing_mode != 0) && (id >= 0 && static_cast<size_t>(id) < query_algo_choices.size() && query_algo_choices[id] != -1);
+
+         if (!has_override) {
+            // 分支 A：没有预设 CSV 或者是 -1，走正常的实时模型预测逻辑
+            final_algo_choice = determine_routing_strategy(
+                routing_mode, baseline_alg, query_labels, stats, 
+                entry_group_ids, is_new_trie_method, is_rec_more_start
+            );
+         } else {
+            // 分支 B：有强制的 CSV 预设，接管算法选择
+            final_algo_choice = query_algo_choices[id];
+
+            // 2. 数据兜底：由于跳过了上面的 determine_routing_strategy，必须在这里补全后续执行所需的前置特征数据。
+
+            // 兜底 A: 如果强制走了 UNG 家族（0 或 1），但入口点组 entry_group_ids 没算
+            if ((final_algo_choice == 0 || final_algo_choice == 1) && entry_group_ids.empty()) {
+               bool use_nT_true = (final_algo_choice == 1);
+               stats.is_trie_recursive = use_nT_true;
+               
+               auto els_start = std::chrono::high_resolution_clock::now();
+               static std::atomic<int> counter{0};
+               
+               // 调用 ELS 算法求交集
+               get_min_super_sets_debug(query_labels, entry_group_ids, false, true, counter, 
+                                        use_nT_true, is_rec_more_start, stats, false);
+               
+               stats.get_min_super_sets_time_ms = std::chrono::duration<double, std::milli>(
+                   std::chrono::high_resolution_clock::now() - els_start).count();
+               stats.num_entry_points = entry_group_ids.size();
+            }
+
+            // 兜底 B: 如果强制走了 Pre-filter (5)，必须确保有精确的过滤掩码,CRoaring形式
+            if (final_algo_choice == 5 && !has_exact_mask) {
+               auto mask_start = std::chrono::high_resolution_clock::now();
+               
+               // 使用CRoaring 倒排索引计算Ppass
+               if (query_labels.empty()) {
+                  roar_res.addRange(0, _num_points);
+                  final_roaring_ptr = &roar_res;
+                  stats.exact_cand_size = _num_points;
+               } else {
+                  bool is_valid = true;
+                  std::vector<const roaring::Roaring*> valid_rb;
+                  
+                  if (_vec_attr_roaring_inv.empty()) {
+                      std::cerr << "\n[FATAL ERROR] _vec_attr_roaring_inv is empty!" << std::endl;
+                      exit(-1); 
+                  }
+                  for (auto label : query_labels) {
+                        if (_attr_to_id.count(label)) {
+                           valid_rb.push_back(&_vec_attr_roaring_inv[_attr_to_id.at(label)]);
+                        } else {
+                           is_valid = false; 
+                           break;
+                        }
+                  }
+                  
+                  if (is_valid) {
+                        std::sort(valid_rb.begin(), valid_rb.end(), [](const roaring::Roaring* a, const roaring::Roaring* b){
+                           return a->cardinality() < b->cardinality();
+                        });
+                        
+                        if (valid_rb.size() == 1) {
+                           // 单一属性，零拷贝直接获取指针
+                           final_roaring_ptr = valid_rb[0];
+                           stats.exact_cand_size = final_roaring_ptr->cardinality();
+                        } else {
+                           // 多个属性，进行交集计算
+                           roar_res = *valid_rb[0] & *valid_rb[1]; 
+                           for (size_t i = 2; i < valid_rb.size(); ++i) {
+                              if (roar_res.isEmpty()) break;
+                              roar_res &= *valid_rb[i];
+                           }
+                           final_roaring_ptr = &roar_res;
+                           stats.exact_cand_size = roar_res.cardinality();
+                        }
+                  } else {
+                     stats.exact_cand_size = 0;
+                  }
+               }
+               
+               stats.bitmap_time_ms += std::chrono::duration<double, std::milli>(
+                   std::chrono::high_resolution_clock::now() - mask_start).count();
+               
+               has_exact_mask = true;
+               stats.global_p_pass = static_cast<float>(stats.exact_cand_size) / _num_points;
+            }
+         }
+
          stats.algo_choice = final_algo_choice;
          stats.routing_total_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - decision_start_time).count();
+         // =========================================================================
 
 
          // ======================= STAGE 2: EXECUTION STAGE =======================
@@ -3495,11 +3645,21 @@ void UniNavGraph::calculate_query_features_only(
              size_t dist_calcs = 0;
              std::vector<std::pair<IdxType, float>> exact_results(K);
 
-             if (routing_mode == 2 || routing_mode == 3) {
-               //   search_baseline_exact_roaring(query, exact_roaring_mask.value(), K, exact_results.data(), dist_calcs);
+            //  if (routing_mode == 2 || routing_mode == 3) {
+            //    //   search_baseline_exact_roaring(query, exact_roaring_mask.value(), K, exact_results.data(), dist_calcs);
+            //      search_baseline_exact_roaring(query, *final_roaring_ptr, K, exact_results.data(), dist_calcs);
+            //  } else {
+            //      bool use_optimized = false; // Mode 1 依然走普通 bitset 
+            //      search_baseline_exact(query, *exact_mask_ptr, K, exact_results.data(), dist_calcs, use_optimized);
+            //  }
+
+            // 优先检查是否生成了 CRoaring 掩码（兜底B 和 模式2/3 都会生成）
+             if (final_roaring_ptr != nullptr) {
                  search_baseline_exact_roaring(query, *final_roaring_ptr, K, exact_results.data(), dist_calcs);
-             } else {
-                 bool use_optimized = false; // Mode 1 依然走普通 bitset 
+             } 
+             // 否则回退到普通 Bitset 掩码（例如 Mode 1 生成的）
+             else if (exact_mask_ptr != nullptr) {
+                 bool use_optimized = false; 
                  search_baseline_exact(query, *exact_mask_ptr, K, exact_results.data(), dist_calcs, use_optimized);
              }
 
@@ -3837,7 +3997,8 @@ void UniNavGraph::calculate_query_features_only(
                                    bool is_ung_more_entry,
                                    int lsearch_start, int lsearch_step,
                                    int efs_start, int efs_step_slow,int efs_step_fast,int lsearch_threshold, 
-                                   int routing_mode,int baseline_alg, faiss_navix::IndexHNSWFlat* navix_index, const std::vector<IdxType> &true_query_group_ids)
+                                   int routing_mode,int baseline_alg, faiss_navix::IndexHNSWFlat* navix_index, const std::vector<IdxType> &true_query_group_ids,
+                                   const std::vector<int>& query_algo_choices)
    {
       // --- Initializations ---
       auto num_queries = query_storage->get_num_points();
@@ -3865,11 +4026,11 @@ void UniNavGraph::calculate_query_features_only(
                 pool.enqueue([this,&Qid_595,&query_storage,&distance_handler,&num_threads,&Lsearch,&num_entry_points,&scenario,&K, results,&num_cmps,&query_stats,
                                    &is_new_trie_method, &is_rec_more_start,&is_ung_more_entry,&lsearch_start,&lsearch_step,
                                    &efs_start, &efs_step_slow,&efs_step_fast,&lsearch_threshold,
-                                   &routing_mode, &baseline_alg,&num_queries,  &true_query_group_ids, navix_index] { // pass const type value j to thread; [] can be empty
+                                   &routing_mode, &baseline_alg,&num_queries,  &true_query_group_ids, &query_algo_choices,navix_index] { // pass const type value j to thread; [] can be empty
                     this->thread_function(Qid_595,query_storage,distance_handler,num_threads,Lsearch,num_entry_points,scenario,K, results,num_cmps,query_stats,
                                    is_new_trie_method, is_rec_more_start,is_ung_more_entry,lsearch_start,lsearch_step,
                                    efs_start, efs_step_slow,efs_step_fast,lsearch_threshold,
-                                   routing_mode, baseline_alg, num_queries, navix_index,true_query_group_ids);
+                                   routing_mode, baseline_alg, num_queries, navix_index,true_query_group_ids, query_algo_choices);
                     return 1; // return to results; the return type must be the same with results
                 }));   
       }
