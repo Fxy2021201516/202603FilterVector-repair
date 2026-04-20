@@ -102,7 +102,7 @@ int main(int argc, char **argv)
 {
    std::string data_type, dist_fn, scenario;
    std::string base_bin_file, query_bin_file, base_label_file, query_label_file, gt_file, index_path_prefix, result_path_prefix, selector_modle_prefix, query_group_id_file;
-   std::string acorn_index_path, acorn_1_index_path, navix_index_path;
+   std::string acorn_index_path, acorn_1_index_path, navix_index_path, algo_choice_csv_path;
    ANNS::IdxType K, num_entry_points;
    std::vector<ANNS::IdxType> Lsearch_list;
    uint32_t num_threads;
@@ -116,7 +116,6 @@ int main(int argc, char **argv)
    int lsearch_start, lsearch_step;
    int efs_start, efs_step_slow, efs_step_fast, lsearch_threshold;
    std::string dataset; 
-   std::string algo_choice_csv_path;
 
    try
    {
@@ -174,6 +173,8 @@ int main(int argc, char **argv)
                          "Number of repeats for each Lsearch value");
       desc.add_options()("routing_mode", po::value<int>(&routing_mode)->required(),
                          "0: auto, 1: SmartRoute, 2: FastSmartRoute, 3: FastSmartRoute+");
+      desc.add_options()("algo_choice_csv", po::value<std::string>(&algo_choice_csv_path)->default_value(""),
+                         "Optional CSV path for per-query algorithm override. Format: QueryID,Algo_Choice");
       desc.add_options()("lsearch_start", po::value<int>(&lsearch_start)->required(), "Lsearch start value");
       desc.add_options()("lsearch_step", po::value<int>(&lsearch_step)->required(), "Lsearch step value");
       desc.add_options()("efs_start", po::value<int>(&efs_start)->required(), "ACORN efs start value");
@@ -183,9 +184,6 @@ int main(int argc, char **argv)
 
       // NaviX
       desc.add_options()("navix_index_path", po::value<std::string>(&navix_index_path)->default_value(""), "Path to NaviX index");
-
-      desc.add_options()("algo_choice_csv", po::value<std::string>(&algo_choice_csv_path)->default_value(""),
-                   "Optional CSV path for per-query algorithm override. Format: QueryID,Algo_Choice");
 
 
 
@@ -324,17 +322,17 @@ int main(int argc, char **argv)
 //              << std::endl;
 //    auto bitmap_total_time = attr_bitmap_total_time; // 默认使用倒排索引方法
 
-   // if (routing_mode == 0){
+   if (routing_mode == 0){
       // calculate query features and save to CSV
-      // std::string features_csv_path = result_path_prefix + "query_features.csv";
-      // index.calculate_query_features_only(
-      //    query_storage,
-      //    num_threads,       
-      //    features_csv_path, 
-      //    true,              // is_new_trie_method
-      //    true               // is_rec_more_start
-      // );
-   // }
+      std::string features_csv_path = result_path_prefix + "query_features.csv";
+      index.calculate_query_features_only(
+         query_storage,
+         num_threads,       
+         features_csv_path, 
+         true,              // is_new_trie_method
+         true               // is_rec_more_start
+      );
+   }
       
 
    // 5-Method Fpass Benchmark
@@ -358,6 +356,12 @@ int main(int argc, char **argv)
       int efs;
       double time_ms;
       float avg_recall;
+
+      // ELS相关的耗时记录字段
+      double els_trie_avg;
+      double els_sort_avg;
+      double els_filter_avg;
+      double els_total_avg;
    };
    std::vector<SearchTimeLog> detailed_times;                      // 存储所有详细耗时记录
    std::map<ANNS::IdxType, std::vector<double>> time_per_lsearch;  // 使用 map 来按 Lsearch 值分组存储每次 repeat 的耗时，方便后续计算平均值
@@ -387,7 +391,7 @@ int main(int argc, char **argv)
          }
          else
          {
-            index.search_hybrid(query_storage, distance_handler, num_threads, current_Lsearch,
+             index.search_hybrid(query_storage, distance_handler, num_threads, current_Lsearch,
                                 num_entry_points, scenario, K, results, num_cmps, query_stats[repeat][LsearchId],is_new_trie_method, is_rec_more_start, is_ung_more_entry, lsearch_start, lsearch_step, efs_start, efs_step_slow,efs_step_fast,lsearch_threshold,routing_mode, baseline_alg ,navix_index, true_query_group_ids,query_algo_choices);
          }
          auto time_cost = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
@@ -400,16 +404,37 @@ int main(int argc, char **argv)
          // 3. 计算当前这一个批次 (LsearchId) 的平均Recall
          double total_recall_for_batch = 0.0;
          int total_efs_for_batch = 0;
+         double total_ndc_for_batch = 0.0;
+
+         // ====== 新增：ELS时间统计 ======
+         double sum_trie = 0.0;
+         double sum_sort = 0.0;
+         double sum_filter = 0.0;
+         double sum_total = 0.0;
          for (int i = 0; i < num_queries; ++i){
             total_recall_for_batch += query_stats[repeat][LsearchId][i].recall;
             total_efs_for_batch += query_stats[repeat][LsearchId][i].acorn_efs_used;
+            total_ndc_for_batch += query_stats[repeat][LsearchId][i].num_distance_calcs;
+
+            // 累加ELS的各个阶段时间
+            const auto &s = query_stats[repeat][LsearchId][i];
+            sum_trie += s.els_trie_time;
+            sum_sort += s.els_sort_time;
+            sum_filter += s.els_filter_time;
+            sum_total += s.els_total_time;
          }
          float avg_recall_for_batch = (num_queries > 0) ? (static_cast<float>(total_recall_for_batch) / num_queries) : 0.0f;
          int efs_for_batch = (num_queries > 0) ? (total_efs_for_batch / num_queries) : 0;
+         double avg_ndc_for_batch = (num_queries > 0) ? (total_ndc_for_batch / num_queries) : 0.0;
+         //新增：计算ELS各阶段的平均时间
+         double avg_trie = (num_queries > 0) ? sum_trie / num_queries : 0.0;
+         double avg_sort = (num_queries > 0) ? sum_sort / num_queries : 0.0;
+         double avg_filter = (num_queries > 0) ? sum_filter / num_queries : 0.0;
+         double avg_total = (num_queries > 0) ? sum_total / num_queries : 0.0;
 
          // 4. 将批处理时间 和 该批次的平均Recall 存入相应的数据结构中
          // a. 存入 detailed_times 用于生成 search_time_details.csv
-         detailed_times.push_back({repeat, current_Lsearch, efs_for_batch,time_cost, avg_recall_for_batch});
+         detailed_times.push_back({repeat, current_Lsearch, efs_for_batch,time_cost, avg_recall_for_batch,avg_trie,avg_sort,avg_filter,avg_total});
 
          // b. 按 Lsearch 值分组存入 map，用于后续计算总平均值，生成 search_time_summary.csv
          time_per_lsearch[current_Lsearch].push_back(time_cost);
@@ -475,10 +500,10 @@ int main(int argc, char **argv)
    std::ofstream details_out(details_file_path);
    if (details_out.is_open())
    {
-      details_out << "Repeat,Lsearch,efs,Time_ms,Avg_Recall\n"; // <-- 修改表头
+      details_out << "Repeat,Lsearch,efs,Time_ms,Avg_Recall,Avg_Trie,Avg_Sort,Avg_Filter,Avg_Total\n"; // <-- 修改表头
       for (const auto &log : detailed_times)
       {
-         details_out << log.repeat << "," << log.l_search <<","<< log.efs << "," << log.time_ms << "," << log.avg_recall << "\n";
+         details_out << log.repeat << "," << log.l_search <<","<< log.efs << "," << log.time_ms << "," << log.avg_recall << "," << log.els_trie_avg << "," << log.els_sort_avg << "," << log.els_filter_avg << "," << log.els_total_avg << "\n";
       }
       details_out.close();
       std::cout << "\n详细的搜索耗时已保存到: " << details_file_path << std::endl;
@@ -530,12 +555,13 @@ int main(int argc, char **argv)
    detail_out << "repeat,Lsearch,efs,QueryID,Time_ms,search_time_ms,core_search_time_ms,Recall,"         
               << "Algo_Choice,IsIntelElsUsed,IsTrieRec,"                                                         
               << "DistCalcs,NumNodeVisited,"                                                             
-              << "MinSupersetT_ms,IntelELS_PredT_ms,Route_PredT_ms,FpassT_ms,Routing_TotalT_ms,BitmapT_new_ms,FeatureT_ms," 
+              << "MinSupersetT_ms,"
+              << "ELS_TrieT_ms,ELS_SortT_ms,ELS_FilterT_ms,ELS_TotalT_ms,"
+              << "IntelELS_PredT_ms,Route_PredT_ms,FpassT_ms,Routing_TotalT_ms,BitmapT_new_ms,FeatureT_ms," 
             //   << "MinSupersetT_ms,IntelELS_PredT_ms,Route_PredT_ms,Routing_TotalT_ms,BitmapT_new_ms,FeatureT_ms," 
               << "AcornFilterType,"
               << "QuerySize,CandSize,ExactCandSize,GlobalPpass,"
-              << "NumEntries,NumDescendants,"
-              << "M1_Phase1_T,M1_Phase2_T,M1_UpwardNodes,M1_BFSNodes,M1_RedundantUpward"
+              << "NumEntries,NumDescendants"
               << "\n";
    for (int repeat = 0; repeat < num_repeats; repeat++)
    {
@@ -558,6 +584,10 @@ int main(int argc, char **argv)
                        << stats.num_distance_calcs << ","
                        << stats.num_nodes_visited << ","
                        << stats.get_min_super_sets_time_ms << ","
+                       << stats.els_trie_time << ","
+                        << stats.els_sort_time << ","
+                        << stats.els_filter_time << ","
+                        << stats.els_total_time << ","
                        << stats.intel_els_pred_time_ms << ","
                        << stats.route_pred_time_ms << ","
                        << stats.fpass_time_ms << ","
@@ -571,12 +601,7 @@ int main(int argc, char **argv)
                        << stats.exact_cand_size << ","  
                        << stats.global_p_pass << ","
                        << stats.num_entry_points << ","
-                       << stats.num_lng_descendants <<","
-                       << stats.m1_time_phase1_ms << ","
-                       << stats.m1_time_phase2_ms << ","
-                       << stats.m1_upward_traversals << ","
-                       << stats.m1_bfs_nodes << ","
-                       << stats.redundant_upward_steps << "\n";
+                       << stats.num_lng_descendants <<"\n";
          }
       }
    }

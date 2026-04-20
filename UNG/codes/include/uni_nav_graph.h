@@ -52,11 +52,6 @@ namespace ANNS
       size_t successful_checks = 0;
       float shortcut_hit_ratio = 0.0f;
       long long redundant_upward_steps = 0; // 向上回溯过程中重复的节点
-      
-        long long m1_upward_traversals = 0;
-        long long m1_bfs_nodes = 0;
-        double m1_time_phase1_ms = 0.0;
-        double m1_time_phase2_ms = 0.0;
 
       // 方法二相关
       size_t recursive_calls = 0;
@@ -85,6 +80,12 @@ namespace ANNS
     double feature_extract_time_ms;
 
     int acorn_filter_type = 0; //记录 ACORN 使用的掩码类型 (0=N/A, 1=ELS, 2=ExactMask, 3=InvertedIndex)
+
+    // ===== ELS具体时间统计 =====
+    double els_trie_time = 0;
+    double els_sort_time = 0;
+    double els_filter_time = 0;
+    double els_total_time = 0;
 
       
    };
