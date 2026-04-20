@@ -312,6 +312,9 @@ namespace ANNS
     const std::string &csv_path,
     size_t expected_num_queries) const;
 
+    // 用于动态控制是否跳过 ELS filter
+    bool skip_els_filter = false;
+
    private:
 
       void thread_function(std::queue<int>& Qid_595,std::shared_ptr<IStorage> &query_storage,

@@ -262,11 +262,10 @@ namespace ANNS
 #if ENABLE_TRIE_DEBUG_OUTPUT
       auto end_bfs = std::chrono::high_resolution_clock::now();
       time_bfs = std::chrono::duration<double, std::milli>(end_bfs - start_bfs).count();
-#endif
-
       metrics.time_phase1_ms = time_candidate_gen;
       metrics.time_phase2_ms = time_bfs;
       metrics.bfs_nodes_processed = bfs_nodes_processed;
+#endif
 
 #if ENABLE_TRIE_DEBUG_OUTPUT
       /*// --- 4. 使用原子计数器控制打印次数 ---

@@ -252,7 +252,7 @@ namespace ANNS
       }
    }
 
-   void UniNavGraph::get_min_super_sets_debug(const std::vector<LabelType> &query_label_set,
+      void UniNavGraph::get_min_super_sets_debug(const std::vector<LabelType> &query_label_set,
                                               std::vector<IdxType> &min_super_set_ids,
                                               bool avoid_self, bool need_containment,
                                               std::atomic<int> &print_counter, bool is_new_trie_method, bool is_rec_more_start, QueryStats &stats,
@@ -326,51 +326,72 @@ namespace ANNS
          min_super_set_ids.emplace_back(candidates[0]->group_id);
          return;
       }
-
+      bool skip_filter = this->skip_els_filter;  // 控制开关，如果为 true 则跳过过滤步骤直接返回所有候选者的 group_id
+      if (skip_filter)
+      {
+         // 快速路径：跳过排序和过滤，直接将候选者 group_id 加入结果
+         for (const auto& candidate : candidates)
+         {
+            min_super_set_ids.emplace_back(candidate->group_id);
+         }
+      }
+      
+      
       // --- 2. 测量排序时间 ---
 // #if ENABLE_ENTRY_DEBUG_OUTPUT
       auto start_sort = std::chrono::high_resolution_clock::now();
 // #endif
-      std::sort(candidates.begin(), candidates.end(),
+      if (!skip_filter)
+      {
+         std::sort(candidates.begin(), candidates.end(),
                 [](const std::shared_ptr<TrieNode> &a, const std::shared_ptr<TrieNode> &b)
                 {
                    return a->label_set_size < b->label_set_size;
                 });
+      }
+      
 // #if ENABLE_ENTRY_DEBUG_OUTPUT
       auto end_sort = std::chrono::high_resolution_clock::now();
       time_sorting = std::chrono::duration<double, std::milli>(end_sort - start_sort).count();
 // #endif
 
-      auto min_size = _group_id_to_label_set[candidates[0]->group_id].size();
-
       // --- 3. 测量过滤循环的时间 ---
 // #if ENABLE_ENTRY_DEBUG_OUTPUT
       auto start_filter = std::chrono::high_resolution_clock::now();
 // #endif
-      for (auto candidate : candidates)
+      if (!skip_filter)
       {
-         const auto &cur_group_id = candidate->group_id;
-         const auto &cur_label_set = _group_id_to_label_set[cur_group_id];
-         bool is_min = true;
-
-         if (cur_label_set.size() > min_size)
+         auto min_size = _group_id_to_label_set[candidates[0]->group_id].size();
+         std::vector<IdxType> filtered_ids;
+         for (auto candidate : candidates)
          {
-            for (auto min_group_id : min_super_set_ids)
+            const auto &cur_group_id = candidate->group_id;
+            const auto &cur_label_set = _group_id_to_label_set[cur_group_id];
+            bool is_min = true;
+
+            if (cur_label_set.size() > min_size)
             {
-               const auto &min_label_set = _group_id_to_label_set[min_group_id];
-               if (std::includes(cur_label_set.begin(), cur_label_set.end(), min_label_set.begin(), min_label_set.end()))
+               for (auto min_group_id : filtered_ids)
                {
-                  is_min = false;
-                  break;
+                  const auto &min_label_set = _group_id_to_label_set[min_group_id];
+                  if (std::includes(cur_label_set.begin(), cur_label_set.end(), min_label_set.begin(), min_label_set.end()))
+                  {
+                     is_min = false;
+                     break;
+                  }
                }
             }
-         }
 
-         if (is_min)
-         {
-            min_super_set_ids.emplace_back(cur_group_id);
+            if (is_min)
+            {
+               // min_super_set_ids.emplace_back(cur_group_id);
+               filtered_ids.emplace_back(cur_group_id);
+            }
          }
+         // 覆盖原始结果
+         min_super_set_ids = std::move(filtered_ids);
       }
+      
 // #if ENABLE_ENTRY_DEBUG_OUTPUT
       auto end_filter = std::chrono::high_resolution_clock::now();
       time_filtering_loop = std::chrono::duration<double, std::milli>(end_filter - start_filter).count();
@@ -3140,7 +3161,7 @@ void UniNavGraph::calculate_query_features_only(
 
       // --- 模式 0: Baseline ---
       if (routing_mode == 0) {
-         if (baseline_alg == 0 || baseline_alg == 1) { // 如果是 UNG 家族，算好 ELS
+         if (baseline_alg == 0 || baseline_alg == 1 || baseline_alg == 8) { // 如果是 UNG 家族，算好 ELS
                bool use_nT_true = (baseline_alg == 1);
                stats.is_trie_recursive = use_nT_true; // 记录: Baseline使用的是递归还是非递归
                
@@ -3453,7 +3474,7 @@ void UniNavGraph::calculate_query_features_only(
 
          stats.bitmap_time_ms = 0.0; 
 
-         if (routing_mode == 1 || routing_mode == 4 || (routing_mode == 0 && baseline_alg == 5)) {
+         if (routing_mode == 1 || routing_mode == 4 || routing_mode == 8 || (routing_mode == 0 && baseline_alg == 5)) {
             // Mode 1 或 Mode 4 或原版 pre-filter：使用 Bitset
             auto mask_start = std::chrono::high_resolution_clock::now(); 
             exact_mask_ptr = &get_exact_cand_size_and_mask(query_labels, stats.exact_cand_size);
@@ -3627,7 +3648,7 @@ void UniNavGraph::calculate_query_features_only(
          // ======================= STAGE 2: EXECUTION STAGE =======================
 
          // Apply entry point expansion logic if needed for the UNG path
-         if (is_ung_more_entry && (final_algo_choice == 0 || final_algo_choice == 1))
+         if (is_ung_more_entry && (final_algo_choice == 0 || final_algo_choice == 1 || final_algo_choice == 8))
          {
             IdxType true_group_id = 0;
             if (id < true_query_group_ids.size())
@@ -3940,7 +3961,7 @@ void UniNavGraph::calculate_query_features_only(
             num_cmps[id] = 0;
             stats.search_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - search_time_start_ms).count();
          }
-         else if (final_algo_choice == 0 || final_algo_choice == 1) // UNG 家族
+         else if (final_algo_choice == 0 || final_algo_choice == 1 || final_algo_choice == 8) // UNG 家族
          {
             // --- Execute UNG Search ---
             auto search_time_start_ms = std::chrono::high_resolution_clock::now();

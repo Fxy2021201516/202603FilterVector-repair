@@ -345,6 +345,11 @@ int main(int argc, char **argv)
    index.warmup_selectors(num_threads);
    std::cout << "--- Warm-up Finished ---"<< std::endl;
 
+   if (baseline_alg == 8) {
+    index.skip_els_filter = true;
+    std::cout << "[UNG+] Mode Enabled: ELS filtering will be skipped." << std::endl;
+}
+
    // init query stats
    std::vector<std::vector<std::vector<ANNS::QueryStats>>> query_stats(num_repeats, std::vector<std::vector<ANNS::QueryStats>>(Lsearch_list.size(), std::vector<ANNS::QueryStats>(num_queries))); //(repeat,Lsearch,queryID)
 

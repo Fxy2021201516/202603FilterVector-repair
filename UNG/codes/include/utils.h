@@ -18,7 +18,7 @@
 #define LIKELY(x) __builtin_expect(x, 1)
 #define UNLIKELY(x) __builtin_expect(x, 0)
 #define ENABLE_ENTRY_DEBUG_OUTPUT 1
-#define ENABLE_TRIE_DEBUG_OUTPUT 1
+#define ENABLE_TRIE_DEBUG_OUTPUT 0
 
 namespace ANNS
 {

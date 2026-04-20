@@ -96,6 +96,7 @@ cat "$CONFIG_FILE" | jq -c '.experiments[]' | while read -r dataset_config; do
                 "pre-filter")     ROUTING_MODE=0; BASELINE_ALG=5 ; IS_REC_MORE_START=false;;
                 "ACORN-1")        ROUTING_MODE=0; BASELINE_ALG=6 ; IS_REC_MORE_START=false;;
                 "NaviX")          ROUTING_MODE=0; BASELINE_ALG=7 ; IS_REC_MORE_START=false;;
+                "UNG+")           ROUTING_MODE=0; BASELINE_ALG=8 ; IS_REC_MORE_START=false;;
                 "SmartRoute")     ROUTING_MODE=1; BASELINE_ALG=-1 ; IS_REC_MORE_START=true;; 
                 "FastSmartRoute") ROUTING_MODE=2; BASELINE_ALG=-1 ; IS_REC_MORE_START=true;; 
                 "FastSmartRoute+") ROUTING_MODE=3; BASELINE_ALG=-1 ; IS_REC_MORE_START=true;;
