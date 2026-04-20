@@ -458,11 +458,11 @@ namespace ANNS
       std::optional<bool> check_pre_trie_heuristic(const std::string& dataset_name, size_t query_length, size_t candidate_set_size) const;
 
       // smartroute selector
-      std::unique_ptr<MethodSelector> _smart_route_selector;    // 单层 SmartRoute (5特征)
+      std::unique_ptr<MethodSelector> _smart_route_selector;    
+      int _majority_acorn_id = 2; // 默认为 ACORN-gamma (id:2)
       std::unique_ptr<MethodSelector> _fast_route_single_selector;
+      int _single_majority_acorn_id = 2;
       std::unique_ptr<MethodSelector> _fast_route_revised_selector;
-      int _single_majority_acorn_id = 2; // 单层模型的 ACORN 多数派兜底
-      int _naive_majority_acorn_id = 2; // 用于存储 Naive SmartRoute的 ACORN 家族多数派 ID
       int _revised_majority_acorn_id = 2;
       int determine_routing_strategy(
         int routing_mode, 

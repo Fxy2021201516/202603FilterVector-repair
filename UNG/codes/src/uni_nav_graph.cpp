@@ -2606,11 +2606,11 @@ namespace ANNS
          std::cout << "- Trie Method Selector is warm." << std::endl;
       }
 
+      // 预热全新的 SmartRoute (3个特征)
       if (_smart_route_selector) {
          std::cout << "- Warming up Smart Route Selector..." << std::endl;
-         std::vector<float> dummy3(3, 0.0f); 
-         // 去除多线程
-         _smart_route_selector->predict(dummy3);
+         std::vector<float> dummy(3, 0.0f); 
+         _smart_route_selector->predict(dummy);
          std::cout << "- Smart Route Selector is warm." << std::endl;
       }
       
@@ -3175,90 +3175,36 @@ void UniNavGraph::calculate_query_features_only(
          return baseline_alg;
       }
 
-      // --- 模式 1: SmartRoute (使用 Bitset 算 Fpass) ---
+      // --- 模式 1: SmartRoute ---
       if (routing_mode == 1) {
-         bool use_nT_true = false; 
-         stats.is_trie_recursive = use_nT_true;
-
-         // ELS
-         auto els_start = std::chrono::high_resolution_clock::now();
-         static std::atomic<int> counter{0};
-         get_min_super_sets_debug(query_labels, entry_group_ids, false, true, counter, use_nT_true, is_rec_more_start, stats, false);
-         stats.get_min_super_sets_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - els_start).count();
-         stats.num_entry_points = entry_group_ids.size();
-
-         // Fpass: 使用 Bitset 倒排交集
-         auto start_fpass = std::chrono::high_resolution_clock::now();
-         // static thread_local std::bitset<12000000> final_group_bitmap;
-         // static thread_local std::bitset<12000000> temp_group_bitmap;
-         // 安全堆分配
-         static thread_local std::unique_ptr<std::bitset<12000000>> final_group_bitmap_ptr;
-         static thread_local std::unique_ptr<std::bitset<12000000>> temp_group_bitmap_ptr;
-         if (!final_group_bitmap_ptr) final_group_bitmap_ptr = std::make_unique<std::bitset<12000000>>();
-         if (!temp_group_bitmap_ptr) temp_group_bitmap_ptr = std::make_unique<std::bitset<12000000>>();
-         auto& final_group_bitmap = *final_group_bitmap_ptr;
-         auto& temp_group_bitmap = *temp_group_bitmap_ptr;
-
-         size_t count2 = 0;
-         if (query_labels.empty()) {
-             count2 = _num_groups;
-         } else {
-             std::vector<const std::vector<IdxType>*> valid_lists;
-             valid_lists.reserve(query_labels.size());
-             bool is_valid = true;
-
-             if (_group_attr_adj_list.empty()) {
-                 std::cerr << "\n[FATAL ERROR] _group_attr_adj_list is empty! You forgot to call build_group_inverted_indices()!" << std::endl;
-                 exit(-1);
-             }
-
-             for (LabelType attr_label : query_labels) {
-                 auto it = _attr_to_id.find(attr_label);
-                 if (it == _attr_to_id.end()) { is_valid = false; break; }
-                 
-                 AtrType mapped_id = it->second;
-                 if (mapped_id < _group_attr_adj_list.size()) {
-                     valid_lists.push_back(&_group_attr_adj_list[mapped_id]);
-                 } else {
-                     is_valid = false; break;
-                 }
-             }
-
-             if (is_valid) {
-                 std::sort(valid_lists.begin(), valid_lists.end(),
-                     [](const std::vector<IdxType>* a, const std::vector<IdxType>* b) { return a->size() < b->size(); });
-
-                 final_group_bitmap.reset();
-                 const auto& first_list = *valid_lists[0];
-                 for (IdxType gid : first_list) final_group_bitmap.set(gid);
-
-                 for (size_t i = 1; i < valid_lists.size(); ++i) {
-                     if (final_group_bitmap.none()) break; 
-                     const auto& vec_list = *valid_lists[i];
-                     for (IdxType gid : vec_list) temp_group_bitmap.set(gid);
-                     final_group_bitmap &= temp_group_bitmap;
-                     for (IdxType gid : vec_list) temp_group_bitmap.reset(gid);
-                 }
-                 count2 = final_group_bitmap.count();
-             }
-         }
-         stats.fpass_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_fpass).count();
-         stats.num_lng_descendants = count2;
-
-         // 开始预测
+         // 1. 立即进行模型预测
          auto pred_start = std::chrono::high_resolution_clock::now();
-         int final_alg = 0; 
+         int router_decision = 0; 
          if (_smart_route_selector) {
-               std::vector<float> features = {f_ppass, static_cast<float>(stats.num_entry_points), static_cast<float>(stats.num_lng_descendants)};
+               // 特征输入顺序必须严格对应 Python 脚本 generate_features 函数
+               std::vector<float> features = {f_ppass, f_qsize, f_cand};
                float pred_val = _smart_route_selector->predict(features);
-               int pred_class = static_cast<int>(std::round(pred_val));
-               
-               if (pred_class == 0) final_alg = 0; 
-               else if (pred_class == 1) final_alg = 5; 
-               else if (pred_class == 2) final_alg = _naive_majority_acorn_id; 
+               router_decision = static_cast<int>(std::round(pred_val));
          }
          stats.route_pred_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - pred_start).count();
-         return final_alg;
+
+         // 2. 根据预测结果进行分流映射
+         // Target Map (来自 python): 0:UNG_Family, 1:ACORN_Family, 2:pre-filter
+         
+         if (router_decision == 2) 
+            return 5;
+         if (router_decision == 1) 
+            return _majority_acorn_id;
+         if (router_decision == 0) {
+               auto els_start = std::chrono::high_resolution_clock::now();
+               static std::atomic<int> counter{0};
+               // UNG 家族默认使用非递归 trie (nTfalse)
+               get_min_super_sets_debug(query_labels, entry_group_ids, false, true, counter, false, is_rec_more_start, stats, false);
+               stats.get_min_super_sets_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - els_start).count();
+               stats.num_entry_points = entry_group_ids.size();
+               
+               return 8; // 映射到 UNG+ 算法
+         }
       }
 
       // --- 模式 2 & 3: FastSmartRoute & FastSmartRoute+ (使用 CRoaring 算 Fpass) ---
@@ -3474,14 +3420,14 @@ void UniNavGraph::calculate_query_features_only(
 
          stats.bitmap_time_ms = 0.0; 
 
-         if (routing_mode == 1 || routing_mode == 4 || routing_mode == 8 || (routing_mode == 0 && baseline_alg == 5)) {
+         if (routing_mode == 4 || (routing_mode == 0 && baseline_alg == 5)) {
             // Mode 1 或 Mode 4 或原版 pre-filter：使用 Bitset
             auto mask_start = std::chrono::high_resolution_clock::now(); 
             exact_mask_ptr = &get_exact_cand_size_and_mask(query_labels, stats.exact_cand_size);
             stats.bitmap_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - mask_start).count(); 
             stats.global_p_pass = static_cast<float>(stats.exact_cand_size) / _num_points;
             has_exact_mask = true;
-         } else if (routing_mode == 2 || routing_mode == 3) {
+         } else if (routing_mode == 1 || routing_mode == 2 || routing_mode == 3) {
             auto mask_start = std::chrono::high_resolution_clock::now(); 
             
             if (query_labels.empty()) {
@@ -4612,25 +4558,25 @@ void UniNavGraph::calculate_query_features_only(
          _trie_method_selector = nullptr;
       }
 
-      // --- 加载 SmartRoute 模型 (3特征, 3分类) ---
-      std::string sr_model_path = selector_modle_prefix + "/naive_smart_route/naive_smart_route.onnx";
+      // --- 加载 SmartRoute 模型 (3特征: GlobalPpass, QuerySize, CandSize) ---
+      std::string sr_model_path = selector_modle_prefix + "/smart_route/router.onnx";
       if (fs::exists(sr_model_path)) {
          _smart_route_selector = std::make_unique<MethodSelector>(sr_model_path);
-         std::cout << "- SmartRoute Model loaded." << std::endl;
+         std::cout << "- SmartRoute Model loaded from: " << sr_model_path << std::endl;
 
-         // 加载 naive_majority_acorn_id.txt
-         std::string naive_majority_id_path = selector_modle_prefix + "/naive_smart_route/naive_majority_acorn_id.txt";
-         if (fs::exists(naive_majority_id_path)) {
-             std::ifstream infile(naive_majority_id_path);
-             if (infile >> _naive_majority_acorn_id) {
-                 std::cout << "- SmartRoute majority ACORN ID loaded: " << _naive_majority_acorn_id << std::endl;
+         // 加载 majority_acorn_id.txt
+         std::string majority_id_path = selector_modle_prefix + "/smart_route/majority_acorn_id.txt";
+         if (fs::exists(majority_id_path)) {
+             std::ifstream infile(majority_id_path);
+             if (infile >> _majority_acorn_id) {
+                 std::cout << "- SmartRoute majority ACORN ID loaded: " << _majority_acorn_id << std::endl;
              }
          } else {
-             std::cout << "- [Warning] naive_majority_acorn_id.txt not found, using default: " << _naive_majority_acorn_id << std::endl;
+             std::cout << "- [Warning] majority_acorn_id.txt not found, using default: " << _majority_acorn_id << std::endl;
          }
-
       } else {
          _smart_route_selector = nullptr;
+         std::cout << "- [Warning] SmartRoute Model not found." << std::endl;
       }
 
       // --- 加载 FastSmartRoute 单层模型 (4特征) ---

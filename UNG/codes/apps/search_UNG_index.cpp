@@ -345,7 +345,7 @@ int main(int argc, char **argv)
    index.warmup_selectors(num_threads);
    std::cout << "--- Warm-up Finished ---"<< std::endl;
 
-   if (baseline_alg == 8) {
+   if (baseline_alg == 8 || routing_mode == 1) {
     index.skip_els_filter = true;
     std::cout << "[UNG+] Mode Enabled: ELS filtering will be skipped." << std::endl;
 }

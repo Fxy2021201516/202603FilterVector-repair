@@ -19,6 +19,7 @@ DATASETS = ["Reviews"]
 ALGO_FOLDERS = {
     'UNG-nTfalse': 'UNG-nTfalse',
     # 'UNG-nTtrue': 'UNG-nTtrue',
+    'UNG+': 'UNG+',
     'ACORN-gamma': 'ACORN-gamma',
     'NaviX': 'NaviX-ACORN',    
     'pre-filter': 'pre-filter'
@@ -204,6 +205,7 @@ def plot_routing_decision_boundaries(valid_df, output_dir):
     name_map = {
         'UNG-nTfalse': 'UNG',
         'UNG-nTtrue': 'UNG', 
+        'UNG+': 'UNG+',
         'ACORN-gamma': r'ACORN-$\gamma$',
         'NaviX': 'NaviX',
         'pre-filter': 'pre-filtering'
@@ -218,9 +220,10 @@ def plot_routing_decision_boundaries(valid_df, output_dir):
         plot_df_left.loc[change_idx, 'Display_Algo'] = 'pre-filtering'
         plot_df_left.loc[change_idx, 'Fastest_Algo'] = 'pre-filter'
     
-    legend_order = ['UNG', r'ACORN-$\gamma$', 'NaviX', 'pre-filtering']
+    legend_order = ['UNG', 'UNG+',r'ACORN-$\gamma$', 'NaviX', 'pre-filtering']
     palette_colors_left = {
         'UNG': 'tab:blue', 
+        'UNG+': 'purple',
         r'ACORN-$\gamma$': 'tab:orange', 
         'NaviX': 'tab:green', 
         'pre-filtering': 'gold'
@@ -276,7 +279,7 @@ def plot_routing_decision_boundaries(valid_df, output_dir):
     plot_df_right = plot_df_right[plot_df_right['Fastest_Algo'] != 'UNG-nTtrue'].copy()
     
     plot_df_right['UNG_Status'] = np.where(
-        plot_df_right['Fastest_Algo'] == 'UNG-nTfalse', 
+        plot_df_right['Fastest_Algo'].isin(['UNG-nTfalse', 'UNG+']),
         'UNG prevails', 
         'UNG not prevails'
     )
@@ -348,7 +351,7 @@ def generate_acorn_family_support_table(df_final, dataset_name):
     """
     # 提取有意义的时间列
     time_cols = {}
-    for algo in ['UNG-nTfalse', 'ACORN-gamma', 'NaviX', 'pre-filter']:
+    for algo in ['UNG-nTfalse', 'UNG+', 'ACORN-gamma', 'NaviX', 'pre-filter']:
         time_col = f'True_EndToEnd_Time_ms_{algo}'
         recall_col = f'Recall_{algo}'
         if time_col in df_final.columns:
@@ -638,7 +641,7 @@ def generate_laion_evidence(df_final, dataset_name):
     
     # 1. 提取有效耗时 (Recall >= 0.9)
     time_cols = {}
-    for algo in ['UNG-nTfalse', 'ACORN-gamma', 'NaviX', 'pre-filter']:
+    for algo in ['UNG-nTfalse', 'UNG+', 'ACORN-gamma', 'NaviX', 'pre-filter']:
         time_col = f'True_EndToEnd_Time_ms_{algo}'
         recall_col = f'Recall_{algo}'
         if time_col in df_final.columns:
