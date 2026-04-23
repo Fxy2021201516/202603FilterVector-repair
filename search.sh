@@ -73,7 +73,11 @@ echo "使用GT: $GT_PATH"
 echo "结果将保存到: $RESULT_OUTPUT_DIR"
 
 # --- Step 6: 执行搜索 ---
-# gdb --batch --ex "run" --ex "bt" --args \
+PERF_EVENTS="cache-references,cache-misses,L1-dcache-loads,L1-dcache-load-misses,LLC-loads,LLC-load-misses,branches,branch-misses"
+PERF_LOG_PATH="$RESULT_OUTPUT_DIR/others/${DATASET}_perf_stat.log"
+echo "性能分析(Perf stat)结果将独立保存到: $PERF_LOG_PATH"
+
+perf stat -e $PERF_EVENTS -o "$PERF_LOG_PATH" \
 "$BUILD_DIR"/apps/search_UNG_index \
     --data_type float  --dataset "$DATASET" --dist_fn L2 --num_threads "$NUM_THREADS" --K "$K" --num_repeats "$NUM_REPEATS" \
     --is_new_method true \

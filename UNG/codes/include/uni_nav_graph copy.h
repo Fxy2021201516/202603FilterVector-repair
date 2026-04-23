@@ -8,7 +8,6 @@
 #include "label_nav_graph.h"
 #include "vamana/vamana.h"
 #include "MethodSelector.h"
-#include "ThreadPool.h"
 #include "../../../ACORN/faiss/IndexACORN.h"
 #include "../../../ACORN/faiss/index_io.h"
 #include <unordered_map>
@@ -18,7 +17,6 @@
 #include <roaring/roaring.h>
 #include <roaring/roaring.hh>
 #include <faiss_navix/IndexHNSW.h>
-#include <memory>
 
 using BitsetType = boost::dynamic_bitset<>;
 
@@ -335,41 +333,22 @@ namespace ANNS
     // 用于动态控制是否跳过 ELS filter
     bool skip_els_filter = false;
 
-    // 类成员线程池，用于复用
-    std::unique_ptr<ThreadPool> _thread_pool = nullptr;
-
    private:
 
-    //   void thread_function(std::queue<int>& Qid_595,std::shared_ptr<IStorage> &query_storage,
-    //                                std::shared_ptr<DistanceHandler> &distance_handler,
-    //                                uint32_t num_threads, IdxType Lsearch,
-    //                                IdxType num_entry_points, std::string scenario,
-    //                                IdxType K, std::pair<IdxType, float> *results,
-    //                                std::vector<float> &num_cmps,
-    //                                std::vector<QueryStats> &query_stats,
-    //                                bool is_new_trie_method, bool is_rec_more_start,
-    //                                bool is_ung_more_entry,
-    //                                int lsearch_start, int lsearch_step,
-    //                                int efs_start, int efs_step_slow,int efs_step_fast,int lsearch_threshold,
-    //                                int routing_mode,int baseline_alg, IdxType num_queries, 
-    //                                faiss_navix::IndexHNSWFlat* navix_index,
-    //                                const std::vector<IdxType> &true_query_group_ids,const std::vector<int> &query_algo_choices);
-
-      void thread_function(int id, SearchCacheList& search_cache_list,
-                           std::shared_ptr<IStorage> &query_storage,
-                           std::shared_ptr<DistanceHandler> &distance_handler,
-                           uint32_t num_threads, IdxType Lsearch,
-                           IdxType num_entry_points, std::string scenario,
-                           IdxType K, std::pair<IdxType, float> *results,
-                           std::vector<float> &num_cmps,
-                           std::vector<QueryStats> &query_stats,
-                           bool is_new_trie_method, bool is_rec_more_start,
-                           bool is_ung_more_entry,
-                           int lsearch_start, int lsearch_step,
-                           int efs_start, int efs_step_slow,int efs_step_fast,int lsearch_threshold,
-                           int routing_mode,int baseline_alg, IdxType num_queries, 
-                           faiss_navix::IndexHNSWFlat* navix_index,
-                           const std::vector<IdxType> &true_query_group_ids,const std::vector<int> &query_algo_choices);
+      void thread_function(std::queue<int>& Qid_595,std::shared_ptr<IStorage> &query_storage,
+                                   std::shared_ptr<DistanceHandler> &distance_handler,
+                                   uint32_t num_threads, IdxType Lsearch,
+                                   IdxType num_entry_points, std::string scenario,
+                                   IdxType K, std::pair<IdxType, float> *results,
+                                   std::vector<float> &num_cmps,
+                                   std::vector<QueryStats> &query_stats,
+                                   bool is_new_trie_method, bool is_rec_more_start,
+                                   bool is_ung_more_entry,
+                                   int lsearch_start, int lsearch_step,
+                                   int efs_start, int efs_step_slow,int efs_step_fast,int lsearch_threshold,
+                                   int routing_mode,int baseline_alg, IdxType num_queries, 
+                                   faiss_navix::IndexHNSWFlat* navix_index,
+                                   const std::vector<IdxType> &true_query_group_ids,const std::vector<int> &query_algo_choices);
       size_t get_candidate_count_for_label(LabelType label) const;
       // data
       std::shared_ptr<IStorage> _base_storage,

@@ -13,11 +13,11 @@ import seaborn as sns
 BASE_DIR = "/home/fengxiaoyao/FilterVector/FilterVectorResults"
 
 # "Amazon","BookReviews","Genome","Music","Reviews", "Tiktok","VariousImg","Laion"
-DATASETS = ["Reviews"]
+DATASETS = ["Amazon","BookReviews","Genome","Music","Reviews", "Tiktok","VariousImg","Laion"]
 
 # 算法名称到文件夹名称的映射
 ALGO_FOLDERS = {
-    'UNG-nTfalse': 'UNG-nTfalse',
+    # 'UNG-nTfalse': 'UNG-nTfalse',
     # 'UNG-nTtrue': 'UNG-nTtrue',
     'UNG+': 'UNG+',
     'ACORN-gamma': 'ACORN-gamma',

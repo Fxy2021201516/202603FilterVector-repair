@@ -9,11 +9,11 @@ import sys
 
 METRIC_MAP_SELECT = {'SearchTime_ms': 'ST'}
 ALGO_MAP_SELECT = {
-    'SmartRoute': 'SR', 'FastSmartRoute': 'FSR', 'FastSmartRoute+': 'FSR+', 
+    'SmartRoute': 'SR',
     'pre-filter': 'PR', 'NaviX-ACORN': 'NX',
     'ACORN-gamma': 'AG', 'ACORN-1': 'A1',
     'ACORN-gamma-improved': 'AGI',
-    'UNG-nTfalse': 'UNG', 'UNG-nTtrue': 'UNGT'
+    'UNG-nTfalse': 'UNG', 'UNG+': 'UNG+'
 }
 
 # ==============================================================================
@@ -313,7 +313,7 @@ def run_selection(merged_summary_path, output_path, params, attribute_coverage_p
         return
 
     # --- 步骤 C: 按比例随机抽样 ---
-    TOTAL_SELECT = 1000
+    TOTAL_SELECT = 200
     
     ratios_list = params.get('selection_ratios', [1, 1, 2])
     

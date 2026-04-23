@@ -257,43 +257,43 @@ def process_full_repeat(
 if __name__ == "__main__":
     repeat_times = 300
     # 原始 1000 条查询的“算法答案表”
-    base_csv = "/home/fengxiaoyao/FilterVector/FilterVectorResults/Reviews/OLD/Results/FastSmartRoute/Index[M32_LB100_alpha1.2_C6_EP16_AN288065_AM32_AMB64_AG80]_GT[GT_query_select_imp_A_B_C-sub-base-123456789_K10]_Search[Ls10-Le500-Lp10_efsS100-efss100-efsf100-lt5000_K10_th100]/results/query_details_repeat1.csv"
+    base_csv = "/home/fengxiaoyao/FilterVector/FilterVectorResults/VariousImg/Results/SmartRoute/Index[M32_LB100_alpha1.2_C6_EP16_AN758935_AM32_AMB64_AG80]_GT[GT_query_select_imp_A_B_C-weighted-sub-base-123456789_K10]_Search[Ls10-Le400-Lp10_efsS200-efss200-efsf200-lt5000_K10_th100]/results/query_details_repeat1.csv"
     
     # 原始数据目录
-    base_data_dir = "/home/fengxiaoyao/FilterVector/FilterVectorData/Reviews/query_select_imp_A_B_C-sub-base-123456789"
+    base_data_dir = "/home/fengxiaoyao/FilterVector/FilterVectorData/VariousImg/query_select_imp_A_B_C-weighted-sub-base-123456789"
 
     # ====================================================
     # 任务 1: 每一个复制 n 次 (Sequential Repeat: Q1,Q1...Q2,Q2...)
     # 存放在 repeat_n 文件夹
     # ====================================================
     print("\n--- 正在生成：逐个重复数据集 ---")
-    out_dir_1 = f"/home/fengxiaoyao/FilterVector/FilterVectorData/Reviews/query_select_imp_A_B_C-sub-base-repeat_{repeat_times}"
+    out_dir_1 = f"/home/fengxiaoyao/FilterVector/FilterVectorData/VariousImg/query_select_imp_A_B_C-weighted-sub-base-repeat_{repeat_times}"
     process(
         csv_path=base_csv,
-        bin_path=f"{base_data_dir}/Reviews_query.bin",
-        fvecs_path=f"{base_data_dir}/Reviews_query.fvecs",
-        label_path=f"{base_data_dir}/Reviews_query_labels.txt",
-        output_bin=f"{out_dir_1}/Reviews_query.bin",
-        output_fvecs=f"{out_dir_1}/Reviews_query.fvecs",
-        output_txt=f"{out_dir_1}/Reviews_query_labels.txt",
-        output_algo_csv=f"{out_dir_1}/algo_choice.csv",
+        bin_path=f"{base_data_dir}/VariousImg_query.bin",
+        fvecs_path=f"{base_data_dir}/VariousImg_query.fvecs",
+        label_path=f"{base_data_dir}/VariousImg_query_labels.txt",
+        output_bin=f"{out_dir_1}/VariousImg_query.bin",
+        output_fvecs=f"{out_dir_1}/VariousImg_query.fvecs",
+        output_txt=f"{out_dir_1}/VariousImg_query_labels.txt",
+        output_algo_csv=f"{out_dir_1}/0_algo_choice.csv",
         repeat_times=repeat_times
     )
 
     # ====================================================
     # 任务 2: 整体重复 n 次 (Cycle Repeat: Q1,Q2...Q1,Q2...)
-    # 存放在 repeat_n_2 文件夹
+    # 存放在 random_n 文件夹
     # ====================================================
     print("\n--- 正在生成：整体循环重复数据集 ---")
-    out_dir_2 = f"/home/fengxiaoyao/FilterVector/FilterVectorData/Reviews/query_select_imp_A_B_C-sub-base-repeat_{repeat_times}_2"
+    out_dir_2 = f"/home/fengxiaoyao/FilterVector/FilterVectorData/VariousImg/query_select_imp_A_B_C-weighted-sub-base-random_{repeat_times}"
     process_full_repeat(
         csv_path=base_csv, # 统一读取最原始的 1000 条答案
-        bin_path=f"{base_data_dir}/Reviews_query.bin",
-        fvecs_path=f"{base_data_dir}/Reviews_query.fvecs",
-        label_path=f"{base_data_dir}/Reviews_query_labels.txt",
-        output_bin=f"{out_dir_2}/Reviews_query.bin",
-        output_fvecs=f"{out_dir_2}/Reviews_query.fvecs",
-        output_txt=f"{out_dir_2}/Reviews_query_labels.txt",
-        output_algo_csv=f"{out_dir_2}/algo_choice.csv", # 会生成 algo_choice_repeat.csv
+        bin_path=f"{base_data_dir}/VariousImg_query.bin",
+        fvecs_path=f"{base_data_dir}/VariousImg_query.fvecs",
+        label_path=f"{base_data_dir}/VariousImg_query_labels.txt",
+        output_bin=f"{out_dir_2}/VariousImg_query.bin",
+        output_fvecs=f"{out_dir_2}/VariousImg_query.fvecs",
+        output_txt=f"{out_dir_2}/VariousImg_query_labels.txt",
+        output_algo_csv=f"{out_dir_2}/0_algo_choice.csv", # 会生成 algo_choice_repeat.csv
         repeat_times=repeat_times
     )

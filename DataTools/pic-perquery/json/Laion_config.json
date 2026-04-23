@@ -51,9 +51,8 @@
                "analysis_params": {
                   "optimal_row_strategy": "default",
                   "enable_speedup_filter": true,
-                  "speedup_target_algorithm": "FastSmartRoute",
+                  "speedup_target_algorithm": "UNG+",
                   "speedup_baseline_algorithms": [
-                     "pre-filter",
                      "UNG-nTfalse"
                   ],
                   "speedup_threshold": 1.3,
@@ -67,10 +66,10 @@
                      "VariousImg": [700, 1001, 2000, 2001],
                      "Laion": [1000, 1001, 1001, 1002]
                   },
-                  "selection_ratios": [1,0,1],
+                  "selection_ratios": [0.2,0,1],
                   "c_length_range": [1, 9],
                   "c_ppass_filters": {
-                     "Laion": [2300, null]
+                     "Laion": [30, null]
                   },
                   "global_recall_filter": {
                      "enabled": false,
@@ -107,9 +106,9 @@
             },
             {
                "enabled": true,
-               "name": "Laion_sub-base-123456789_K10_T100_UNG-nTtrue",
+               "name": "Laion_sub-base-123456789_K10_T100_UNG+",
                "parameters": {
-                  "algorithm_name": "UNG-nTtrue",
+                  "algorithm_name": "UNG+",
                   "query_dir_path": "query_C_D-weighted-sub-base-123456789",
                   "K": 10,
                   "threads": 100,
@@ -192,50 +191,6 @@
                   "acorn_efs_step_fast": 10,
                   "lsearch_threshold": 500000
                }
-            },
-            {
-               "enabled": true,
-               "name": "Laion_sub-base-123456789_K10_T100_FastSmartRoute",
-               "parameters": {
-                  "algorithm_name": "FastSmartRoute",
-                  "query_dir_path": "query_C_D-weighted-sub-base-123456789",
-                  "K": 10,
-                  "threads": 100,
-                  "max_degree": 32,
-                  "Lbuild": 1000,
-                  "alpha": 1.2,
-                  "num_cross_edges": 16,
-                  "num_entry_points": 16,
-                  "lsearch_start": 1000,
-                  "lsearch_end": 40000,
-                  "lsearch_step": 1000,
-                  "acorn_efs_start": 10,
-                  "acorn_efs_step_slow": 10,
-                  "acorn_efs_step_fast": 10,
-                  "lsearch_threshold": 500000
-               }
-            },
-            {
-               "enabled": true,
-               "name": "Laion_sub-base-123456789_K10_T100_FastSmartRoute+",
-               "parameters": {
-                  "algorithm_name": "FastSmartRoute+",
-                  "query_dir_path": "query_C_D-weighted-sub-base-123456789",
-                  "K": 10,
-                  "threads": 100,
-                  "max_degree": 32,
-                  "Lbuild": 1000,
-                  "alpha": 1.2,
-                  "num_cross_edges": 16,
-                  "num_entry_points": 16,
-                  "lsearch_start": 1000,
-                  "lsearch_end": 40000,
-                  "lsearch_step": 1000,
-                  "acorn_efs_start": 10,
-                  "acorn_efs_step_slow": 10,
-                  "acorn_efs_step_fast": 10,
-                  "lsearch_threshold": 500000
-               }
             }
          ]
       }
@@ -258,7 +213,7 @@
                },
                {
                   "dataset": "Laion",
-                  "experiment_name": "Laion_sub-base-123456789_K10_T100_UNG-nTtrue"
+                  "experiment_name": "Laion_sub-base-123456789_K10_T100_UNG+"
                },
                {
                   "dataset": "Laion",
@@ -271,14 +226,6 @@
                {
                   "dataset": "Laion",
                   "experiment_name": "Laion_sub-base-123456789_K10_T100_SmartRoute"
-               },
-               {
-                  "dataset": "Laion",
-                  "experiment_name": "Laion_sub-base-123456789_K10_T100_FastSmartRoute"
-               },
-               {
-                  "dataset": "Laion",
-                  "experiment_name": "Laion_sub-base-123456789_K10_T100_FastSmartRoute+"
                }
             ]
          }

@@ -8,7 +8,6 @@
 #include "label_nav_graph.h"
 #include "vamana/vamana.h"
 #include "MethodSelector.h"
-#include "ThreadPool.h"
 #include "../../../ACORN/faiss/IndexACORN.h"
 #include "../../../ACORN/faiss/index_io.h"
 #include <unordered_map>
@@ -18,7 +17,6 @@
 #include <roaring/roaring.h>
 #include <roaring/roaring.hh>
 #include <faiss_navix/IndexHNSW.h>
-#include <memory>
 
 using BitsetType = boost::dynamic_bitset<>;
 
@@ -88,9 +86,6 @@ namespace ANNS
     double els_sort_time = 0;
     double els_filter_time = 0;
     double els_total_time = 0;
-
-    double global_sort_time_ms = 0.0;  // 记录平摊后的排序耗时
-    double mask_gen_time_ms = 0.0;     // 记录物理掩码生成耗时
 
       
    };
@@ -163,22 +158,7 @@ namespace ANNS
                          int efs_start, int efs_step_slow,int efs_step_fast,int lsearch_threshold, 
                          int routing_mode, int baseline_alg, faiss_navix::IndexHNSWFlat* navix_index = nullptr,
                          const std::vector<IdxType> &true_query_group_ids = {},// 包含每个查询其真实来源组ID的向量
-                         const std::vector<int>& query_algo_choices = {},
-                         std::queue<int> task_queue = std::queue<int>()); 
-
-      // 全局预测函数：统一计算所有查询的掩码和模型路由
-      std::vector<int> global_predict_algo_choices(
-          std::shared_ptr<IStorage> query_storage,
-          int routing_mode,
-          const std::vector<int>& csv_choices,
-          uint32_t num_threads,
-          std::vector<QueryStats>& out_global_stats);
-
-      // 全局排序函数：根据算法和哈希进行缓存友好重排
-      std::vector<int> get_sorted_query_ids(
-          std::shared_ptr<IStorage> query_storage,
-          const std::vector<int>& algo_choices,
-          int routing_mode);
+                         const std::vector<int>& query_algo_choices = {}); 
 
       // I/O
       void save(std::string index_path_prefix, std::string results_path_prefix);
@@ -332,44 +312,22 @@ namespace ANNS
     const std::string &csv_path,
     size_t expected_num_queries) const;
 
-    // 用于动态控制是否跳过 ELS filter
-    bool skip_els_filter = false;
-
-    // 类成员线程池，用于复用
-    std::unique_ptr<ThreadPool> _thread_pool = nullptr;
-
    private:
 
-    //   void thread_function(std::queue<int>& Qid_595,std::shared_ptr<IStorage> &query_storage,
-    //                                std::shared_ptr<DistanceHandler> &distance_handler,
-    //                                uint32_t num_threads, IdxType Lsearch,
-    //                                IdxType num_entry_points, std::string scenario,
-    //                                IdxType K, std::pair<IdxType, float> *results,
-    //                                std::vector<float> &num_cmps,
-    //                                std::vector<QueryStats> &query_stats,
-    //                                bool is_new_trie_method, bool is_rec_more_start,
-    //                                bool is_ung_more_entry,
-    //                                int lsearch_start, int lsearch_step,
-    //                                int efs_start, int efs_step_slow,int efs_step_fast,int lsearch_threshold,
-    //                                int routing_mode,int baseline_alg, IdxType num_queries, 
-    //                                faiss_navix::IndexHNSWFlat* navix_index,
-    //                                const std::vector<IdxType> &true_query_group_ids,const std::vector<int> &query_algo_choices);
-
-      void thread_function(int id, SearchCacheList& search_cache_list,
-                           std::shared_ptr<IStorage> &query_storage,
-                           std::shared_ptr<DistanceHandler> &distance_handler,
-                           uint32_t num_threads, IdxType Lsearch,
-                           IdxType num_entry_points, std::string scenario,
-                           IdxType K, std::pair<IdxType, float> *results,
-                           std::vector<float> &num_cmps,
-                           std::vector<QueryStats> &query_stats,
-                           bool is_new_trie_method, bool is_rec_more_start,
-                           bool is_ung_more_entry,
-                           int lsearch_start, int lsearch_step,
-                           int efs_start, int efs_step_slow,int efs_step_fast,int lsearch_threshold,
-                           int routing_mode,int baseline_alg, IdxType num_queries, 
-                           faiss_navix::IndexHNSWFlat* navix_index,
-                           const std::vector<IdxType> &true_query_group_ids,const std::vector<int> &query_algo_choices);
+      void thread_function(std::queue<int>& Qid_595,std::shared_ptr<IStorage> &query_storage,
+                                   std::shared_ptr<DistanceHandler> &distance_handler,
+                                   uint32_t num_threads, IdxType Lsearch,
+                                   IdxType num_entry_points, std::string scenario,
+                                   IdxType K, std::pair<IdxType, float> *results,
+                                   std::vector<float> &num_cmps,
+                                   std::vector<QueryStats> &query_stats,
+                                   bool is_new_trie_method, bool is_rec_more_start,
+                                   bool is_ung_more_entry,
+                                   int lsearch_start, int lsearch_step,
+                                   int efs_start, int efs_step_slow,int efs_step_fast,int lsearch_threshold,
+                                   int routing_mode,int baseline_alg, IdxType num_queries, 
+                                   faiss_navix::IndexHNSWFlat* navix_index,
+                                   const std::vector<IdxType> &true_query_group_ids,const std::vector<int> &query_algo_choices);
       size_t get_candidate_count_for_label(LabelType label) const;
       // data
       std::shared_ptr<IStorage> _base_storage,
@@ -497,11 +455,11 @@ namespace ANNS
       std::optional<bool> check_pre_trie_heuristic(const std::string& dataset_name, size_t query_length, size_t candidate_set_size) const;
 
       // smartroute selector
-      std::unique_ptr<MethodSelector> _smart_route_selector;    
-      int _majority_acorn_id = 2; // 默认为 ACORN-gamma (id:2)
+      std::unique_ptr<MethodSelector> _smart_route_selector;    // 单层 SmartRoute (5特征)
       std::unique_ptr<MethodSelector> _fast_route_single_selector;
-      int _single_majority_acorn_id = 2;
       std::unique_ptr<MethodSelector> _fast_route_revised_selector;
+      int _single_majority_acorn_id = 2; // 单层模型的 ACORN 多数派兜底
+      int _naive_majority_acorn_id = 2; // 用于存储 Naive SmartRoute的 ACORN 家族多数派 ID
       int _revised_majority_acorn_id = 2;
       int determine_routing_strategy(
         int routing_mode, 

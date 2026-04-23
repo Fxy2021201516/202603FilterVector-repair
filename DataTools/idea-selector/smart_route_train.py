@@ -27,7 +27,7 @@ except ImportError:
 # 1. 全局配置区域
 # ==========================================
 ## "Amazon","BookReviews", "Genome", "Music", "Reviews", "Tiktok", "VariousImg", "Laion"
-DATASET_LIST = ["Reviews"] 
+DATASET_LIST = ["Amazon","BookReviews", "Genome", "Music", "Reviews", "Tiktok", "VariousImg", "Laion"] 
 BASE_DIR = "/home/fengxiaoyao/FilterVector/FilterVectorResults"
 
 # 更新原始算法列表

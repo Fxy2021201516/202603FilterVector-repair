@@ -101,6 +101,7 @@ cat "$CONFIG_FILE" | jq -c '.experiments[]' | while read -r dataset_config; do
                 "FastSmartRoute") ROUTING_MODE=2; BASELINE_ALG=-1 ; IS_REC_MORE_START=true;; 
                 "FastSmartRoute+") ROUTING_MODE=3; BASELINE_ALG=-1 ; IS_REC_MORE_START=true;;
                 "SmartRoute-revised") ROUTING_MODE=4; BASELINE_ALG=-1 ; IS_REC_MORE_START=true;;
+                "SmartRoute+")    ROUTING_MODE=5; BASELINE_ALG=-1 ; IS_REC_MORE_START=true;;
                 *)
                     echo "错误: 未知的算法名称 '$ALGORITHM_NAME'。请在 exp.sh 的 case 语句中定义它。"
                     exit 1;;

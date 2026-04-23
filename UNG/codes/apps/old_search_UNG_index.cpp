@@ -263,58 +263,6 @@ int main(int argc, char **argv)
    auto results = new std::pair<ANNS::IdxType, float>[num_queries * K];
    std::vector<int> query_algo_choices = index.load_query_algo_choices_from_csv(algo_choice_csv_path, num_queries);
 
-   // ==================== [SmartRoute+ 全局预处理 (仅执行1次)] ====================
-   std::vector<ANNS::QueryStats> global_pred_stats(num_queries);
-   double total_global_pred_time = 0.0;
-   double total_global_sort_time = 0.0;
-   std::vector<int> final_global_choices = query_algo_choices;
-   std::vector<int> sorted_query_ids(num_queries);
-   std::iota(sorted_query_ids.begin(), sorted_query_ids.end(), 0);
-
-   if (routing_mode == 5) {
-       // --- 循环多次，取全局预测的最短时间 ---
-       double min_pred_time = std::numeric_limits<double>::max();
-       std::vector<int> best_choices;
-       std::vector<ANNS::QueryStats> best_stats;
-       
-       int num_trials = 3; // 设定测试次数
-       for (int trial = 0; trial < num_trials; ++trial) {
-           auto global_pred_start = std::chrono::high_resolution_clock::now();
-           std::vector<ANNS::QueryStats> trial_stats(num_queries);
-           auto trial_choices = index.global_predict_algo_choices(
-               query_storage, routing_mode, query_algo_choices, num_threads, trial_stats
-           );
-           double trial_time = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - global_pred_start).count();
-           
-           std::cout << "[SmartRoute+] Trial " << trial + 1 << " Prediction Time: " << trial_time << " ms" << std::endl;
-           
-           if (trial_time < min_pred_time) {
-               min_pred_time = trial_time;
-               best_choices = std::move(trial_choices);
-               best_stats = std::move(trial_stats);
-           }
-       }
-       
-       // 采纳最优结果
-       final_global_choices = std::move(best_choices);
-       global_pred_stats = std::move(best_stats);
-       total_global_pred_time = min_pred_time;
-       std::cout << "\n[SmartRoute+] Best Global Prediction Time: " << total_global_pred_time << " ms" << std::endl;
-
-       // 2. 全局缓存友好排序
-       auto global_sort_start = std::chrono::high_resolution_clock::now();
-       sorted_query_ids = index.get_sorted_query_ids(query_storage, final_global_choices, routing_mode);
-       total_global_sort_time = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - global_sort_start).count();
-       std::cout << "[SmartRoute+] Global Sort Time: " << total_global_sort_time << " ms" << std::endl;
-
-       double avg_sort_ms = total_global_sort_time / num_queries;
-       for (int i = 0; i < (int)num_queries; ++i) {
-           global_pred_stats[i].global_sort_time_ms = avg_sort_ms;
-       }
-       std::cout << "[SmartRoute+] Total Preprocessing Time: " << (total_global_pred_time + total_global_sort_time) << " ms" << std::endl;
-   }
-   // ====================================================================================
-
 //    // 为所有查询预先计算并存储入口组ID
 //    std::cout << "\n--- Step 1: Pre-computing Entry Group IDs (Measuring Entry Cost) ---" << std::endl;
 //    std::vector<std::vector<ANNS::IdxType>> all_entry_group_ids(num_queries);
@@ -374,17 +322,17 @@ int main(int argc, char **argv)
 //              << std::endl;
 //    auto bitmap_total_time = attr_bitmap_total_time; // 默认使用倒排索引方法
 
-   // if (routing_mode == 0){
-   //    // calculate query features and save to CSV
-   //    std::string features_csv_path = result_path_prefix + "query_features.csv";
-   //    index.calculate_query_features_only(
-   //       query_storage,
-   //       num_threads,       
-   //       features_csv_path, 
-   //       true,              // is_new_trie_method
-   //       true               // is_rec_more_start
-   //    );
-   // }
+   if (routing_mode == 0){
+      // calculate query features and save to CSV
+      std::string features_csv_path = result_path_prefix + "query_features.csv";
+      index.calculate_query_features_only(
+         query_storage,
+         num_threads,       
+         features_csv_path, 
+         true,              // is_new_trie_method
+         true               // is_rec_more_start
+      );
+   }
       
 
    // 5-Method Fpass Benchmark
@@ -396,11 +344,6 @@ int main(int argc, char **argv)
    std::cout << "\n--- Starting Warm-up Phase ---" << std::endl;
    index.warmup_selectors(num_threads);
    std::cout << "--- Warm-up Finished ---"<< std::endl;
-
-   if (baseline_alg == 8 || routing_mode == 1 || routing_mode == 5) {
-    index.skip_els_filter = true;
-    std::cout << "[UNG+] Mode Enabled: ELS filtering will be skipped." << std::endl;
-}
 
    // init query stats
    std::vector<std::vector<std::vector<ANNS::QueryStats>>> query_stats(num_repeats, std::vector<std::vector<ANNS::QueryStats>>(Lsearch_list.size(), std::vector<ANNS::QueryStats>(num_queries))); //(repeat,Lsearch,queryID)
@@ -419,9 +362,6 @@ int main(int argc, char **argv)
       double els_sort_avg;
       double els_filter_avg;
       double els_total_avg;
-
-      double mask_gen_avg;
-      double global_sort_avg;
    };
    std::vector<SearchTimeLog> detailed_times;                      // 存储所有详细耗时记录
    std::map<ANNS::IdxType, std::vector<double>> time_per_lsearch;  // 使用 map 来按 Lsearch 值分组存储每次 repeat 的耗时，方便后续计算平均值
@@ -443,23 +383,7 @@ int main(int argc, char **argv)
          ANNS::IdxType current_Lsearch = Lsearch_list[LsearchId];
          std::vector<float> num_cmps(num_queries);
 
-         // --- 1. 组装本轮的查询队列，并下发全局预处理数据 ---
-         std::queue<int> task_queue;
-         for (int id : sorted_query_ids) {
-             task_queue.push(id);
-         }
-
-         if (routing_mode == 5) {
-             for (int i = 0; i < (int)num_queries; ++i) {
-                 query_stats[repeat][LsearchId][i].mask_gen_time_ms = global_pred_stats[i].mask_gen_time_ms;
-                 query_stats[repeat][LsearchId][i].route_pred_time_ms = global_pred_stats[i].route_pred_time_ms;
-                 query_stats[repeat][LsearchId][i].global_sort_time_ms = global_pred_stats[i].global_sort_time_ms;
-                 query_stats[repeat][LsearchId][i].exact_cand_size = global_pred_stats[i].exact_cand_size;
-                 query_stats[repeat][LsearchId][i].global_p_pass = global_pred_stats[i].global_p_pass;
-             }
-         }
-
-         // --- 2. 计时并执行搜索 ---
+         // 1. 计时并执行搜索
          auto start_time = std::chrono::high_resolution_clock::now();
          if (!is_new_method)
          {
@@ -468,31 +392,25 @@ int main(int argc, char **argv)
          else
          {
              index.search_hybrid(query_storage, distance_handler, num_threads, current_Lsearch,
-                                num_entry_points, scenario, K, results, num_cmps, query_stats[repeat][LsearchId],is_new_trie_method, is_rec_more_start, is_ung_more_entry, lsearch_start, lsearch_step, efs_start, efs_step_slow,efs_step_fast,lsearch_threshold,routing_mode, baseline_alg ,navix_index, true_query_group_ids, final_global_choices, task_queue);
+                                num_entry_points, scenario, K, results, num_cmps, query_stats[repeat][LsearchId],is_new_trie_method, is_rec_more_start, is_ung_more_entry, lsearch_start, lsearch_step, efs_start, efs_step_slow,efs_step_fast,lsearch_threshold,routing_mode, baseline_alg ,navix_index, true_query_group_ids,query_algo_choices);
          }
-         double pure_search_time = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
+         auto time_cost = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
          
-         // --- 3. 批次时间补偿 ---
-         double time_cost = pure_search_time;
-         if (routing_mode == 5) {
-             time_cost += (total_global_pred_time + total_global_sort_time);
-         }
-         
-         // --- 4. 计算每个独立查询的Recall ---
+
+         // 2. 计算每个独立查询的Recall
          for (int i = 0; i < num_queries; ++i)
             query_stats[repeat][LsearchId][i].recall = calculate_single_query_recall(gt + i * K, results + i * K, K);
 
-         // --- 5. 计算当前这一个批次 (LsearchId) 的平均Recall ---
+         // 3. 计算当前这一个批次 (LsearchId) 的平均Recall
          double total_recall_for_batch = 0.0;
          int total_efs_for_batch = 0;
          double total_ndc_for_batch = 0.0;
+
+         // ====== 新增：ELS时间统计 ======
          double sum_trie = 0.0;
          double sum_sort = 0.0;
          double sum_filter = 0.0;
          double sum_total = 0.0;
-         double sum_mask_gen = 0.0;
-         double sum_global_sort = 0.0;
-
          for (int i = 0; i < num_queries; ++i){
             total_recall_for_batch += query_stats[repeat][LsearchId][i].recall;
             total_efs_for_batch += query_stats[repeat][LsearchId][i].acorn_efs_used;
@@ -504,36 +422,26 @@ int main(int argc, char **argv)
             sum_sort += s.els_sort_time;
             sum_filter += s.els_filter_time;
             sum_total += s.els_total_time;
-
-            sum_mask_gen += query_stats[repeat][LsearchId][i].mask_gen_time_ms;
-            sum_global_sort += query_stats[repeat][LsearchId][i].global_sort_time_ms;
          }
          float avg_recall_for_batch = (num_queries > 0) ? (static_cast<float>(total_recall_for_batch) / num_queries) : 0.0f;
          int efs_for_batch = (num_queries > 0) ? (total_efs_for_batch / num_queries) : 0;
          double avg_ndc_for_batch = (num_queries > 0) ? (total_ndc_for_batch / num_queries) : 0.0;
-         // 计算ELS各阶段的平均时间
+         //新增：计算ELS各阶段的平均时间
          double avg_trie = (num_queries > 0) ? sum_trie / num_queries : 0.0;
          double avg_sort = (num_queries > 0) ? sum_sort / num_queries : 0.0;
          double avg_filter = (num_queries > 0) ? sum_filter / num_queries : 0.0;
          double avg_total = (num_queries > 0) ? sum_total / num_queries : 0.0;
 
-         double avg_mask_gen = (num_queries > 0) ? sum_mask_gen / num_queries : 0.0;
-         double avg_global_sort = (num_queries > 0) ? sum_global_sort / num_queries : 0.0;
-
-         // 将批处理时间 和 该批次的平均Recall 存入相应的数据结构中
+         // 4. 将批处理时间 和 该批次的平均Recall 存入相应的数据结构中
          // a. 存入 detailed_times 用于生成 search_time_details.csv
-         detailed_times.push_back({repeat, current_Lsearch, efs_for_batch, time_cost, avg_recall_for_batch, avg_trie, avg_sort, avg_filter, avg_total, avg_mask_gen, avg_global_sort});
+         detailed_times.push_back({repeat, current_Lsearch, efs_for_batch,time_cost, avg_recall_for_batch,avg_trie,avg_sort,avg_filter,avg_total});
 
          // b. 按 Lsearch 值分组存入 map，用于后续计算总平均值，生成 search_time_summary.csv
          time_per_lsearch[current_Lsearch].push_back(time_cost);
          recall_per_lsearch[current_Lsearch].push_back(avg_recall_for_batch);
          efs_per_lsearch[current_Lsearch].push_back(efs_for_batch);
 
-         std::cout << "  Lsearch=" << current_Lsearch << ", efs=" << efs_per_lsearch[current_Lsearch][0] 
-                   << ", global pred time=" << total_global_pred_time << "ms"
-                   << ", global sort time=" << total_global_sort_time << "ms"
-                   << ", pure search time=" << pure_search_time << "ms"
-                   << ", time=" << time_cost << "ms" << ", avg_recall=" << avg_recall_for_batch << std::endl;
+         std::cout << "  Lsearch=" << current_Lsearch << ", efs=" << efs_per_lsearch[current_Lsearch][0] << ", time=" << time_cost << "ms" << ", avg_recall=" << avg_recall_for_batch << std::endl;
 
          /*// 打印每个查询的召回率、Ground Truth和算法找到的近邻
          std::cout << "  --- K-NN Results for Lsearch=" << current_Lsearch << " ---" << std::endl;
@@ -592,12 +500,10 @@ int main(int argc, char **argv)
    std::ofstream details_out(details_file_path);
    if (details_out.is_open())
    {
-      details_out << "Repeat,Lsearch,efs,Time_ms,Avg_Recall,Avg_Trie,Avg_Sort,Avg_Filter,Avg_Total,Avg_MaskGen,Avg_GlobalSort\n";
+      details_out << "Repeat,Lsearch,efs,Time_ms,Avg_Recall,Avg_Trie,Avg_Sort,Avg_Filter,Avg_Total\n"; // <-- 修改表头
       for (const auto &log : detailed_times)
       {
-         details_out << log.repeat << "," << log.l_search <<","<< log.efs << "," << log.time_ms << "," << log.avg_recall << "," 
-                     << log.els_trie_avg << "," << log.els_sort_avg << "," << log.els_filter_avg << "," << log.els_total_avg << ","
-                     << log.mask_gen_avg << "," << log.global_sort_avg << "\n";
+         details_out << log.repeat << "," << log.l_search <<","<< log.efs << "," << log.time_ms << "," << log.avg_recall << "," << log.els_trie_avg << "," << log.els_sort_avg << "," << log.els_filter_avg << "," << log.els_total_avg << "\n";
       }
       details_out.close();
       std::cout << "\n详细的搜索耗时已保存到: " << details_file_path << std::endl;
@@ -651,8 +557,8 @@ int main(int argc, char **argv)
               << "DistCalcs,NumNodeVisited,"                                                             
               << "MinSupersetT_ms,"
               << "ELS_TrieT_ms,ELS_SortT_ms,ELS_FilterT_ms,ELS_TotalT_ms,"
-            //   << "IntelELS_PredT_ms,Route_PredT_ms,FpassT_ms,Routing_TotalT_ms,BitmapT_new_ms,FeatureT_ms," 
-              << "IntelELS_PredT_ms,Route_PredT_ms,Mask_GenT_ms,Global_SortT_ms,FpassT_ms,Routing_TotalT_ms,BitmapT_new_ms,FeatureT_ms,"
+              << "IntelELS_PredT_ms,Route_PredT_ms,FpassT_ms,Routing_TotalT_ms,BitmapT_new_ms,FeatureT_ms," 
+            //   << "MinSupersetT_ms,IntelELS_PredT_ms,Route_PredT_ms,Routing_TotalT_ms,BitmapT_new_ms,FeatureT_ms," 
               << "AcornFilterType,"
               << "QuerySize,CandSize,ExactCandSize,GlobalPpass,"
               << "NumEntries,NumDescendants"
@@ -684,8 +590,6 @@ int main(int argc, char **argv)
                         << stats.els_total_time << ","
                        << stats.intel_els_pred_time_ms << ","
                        << stats.route_pred_time_ms << ","
-                       << stats.mask_gen_time_ms << ","       
-                       << stats.global_sort_time_ms << ","    
                        << stats.fpass_time_ms << ","
                        << stats.routing_total_time_ms << ","
                        << stats.bitmap_time_ms << ","

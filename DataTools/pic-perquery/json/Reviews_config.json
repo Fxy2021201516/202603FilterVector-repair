@@ -50,12 +50,12 @@
                },
                "analysis_params": {
                   "optimal_row_strategy": "default",
-                  "enable_speedup_filter": false,
-                  "speedup_target_algorithm": "FastSmartRoute+",
+                  "enable_speedup_filter": true,
+                  "speedup_target_algorithm": "SmartRoute",
                   "speedup_baseline_algorithms": [
-                     "FastSmartRoute",
-                     "pre-filter",
-                     "UNG-nTfalse"
+                     "UNG-nTfalse",
+                     "NaviX-ACORN",
+                     "ACORN-gamma"
                   ],
                   "speedup_threshold": 1.2,
                   "query_id_splits": {
@@ -65,10 +65,10 @@
                      "Music": [700, 1001, 2000, 2001],
                      "Reviews": [60, 81, 180, 181]
                   },
-                  "selection_ratios": [0.0,0,1],
-                  "c_length_range": [2, 9],
+                  "selection_ratios": [0.01,0,1],
+                  "c_length_range": [1, 9],
                   "c_ppass_filters": {
-                     "Reviews": [250, null]
+                     "Reviews": [250, 200000]
                   },
                   "global_recall_filter": {
                      "enabled": false,
@@ -105,9 +105,9 @@
             },
             {
                "enabled": true,
-               "name": "Reviews_sub-base-123456789_K10_T100_UNG-nTtrue",
+               "name": "Reviews_sub-base-123456789_K10_T100_UNG+",
                "parameters": {
-                  "algorithm_name": "UNG-nTtrue",
+                  "algorithm_name": "UNG+",
                   "query_dir_path": "query_A_B_C-sub-base-123456789",
                   "K": 10,
                   "threads": 100,
@@ -190,50 +190,6 @@
                   "acorn_efs_step_fast": 100,
                   "lsearch_threshold": 5000
                }
-            },
-            {
-               "enabled": true,
-               "name": "Reviews_sub-base-123456789_K10_T100_FastSmartRoute",
-               "parameters": {
-                  "algorithm_name": "FastSmartRoute",
-                  "query_dir_path": "query_A_B_C-sub-base-123456789",
-                  "K": 10,
-                  "threads": 100,
-                  "max_degree": 32,
-                  "Lbuild": 100,
-                  "alpha": 1.2,
-                  "num_cross_edges": 6,
-                  "num_entry_points": 16,
-                  "lsearch_start": 1000,
-                  "lsearch_end": 40000,
-                  "lsearch_step": 1000,
-                  "acorn_efs_start": 100,
-                  "acorn_efs_step_slow": 100,
-                  "acorn_efs_step_fast": 100,
-                  "lsearch_threshold": 5000
-               }
-            },
-            {
-               "enabled": true,
-               "name": "Reviews_sub-base-123456789_K10_T100_FastSmartRoute+",
-               "parameters": {
-                  "algorithm_name": "FastSmartRoute+",
-                  "query_dir_path": "query_A_B_C-sub-base-123456789",
-                  "K": 10,
-                  "threads": 100,
-                  "max_degree": 32,
-                  "Lbuild": 100,
-                  "alpha": 1.2,
-                  "num_cross_edges": 6,
-                  "num_entry_points": 16,
-                  "lsearch_start": 1000,
-                  "lsearch_end": 40000,
-                  "lsearch_step": 1000,
-                  "acorn_efs_start": 100,
-                  "acorn_efs_step_slow": 100,
-                  "acorn_efs_step_fast": 100,
-                  "lsearch_threshold": 5000
-               }
             }
          ]
       }
@@ -256,7 +212,7 @@
                },
                {
                   "dataset": "Reviews",
-                  "experiment_name": "Reviews_sub-base-123456789_K10_T100_UNG-nTtrue"
+                  "experiment_name": "Reviews_sub-base-123456789_K10_T100_UNG+"
                },
                {
                   "dataset": "Reviews",
@@ -269,14 +225,6 @@
                {
                   "dataset": "Reviews",
                   "experiment_name": "Reviews_sub-base-123456789_K10_T100_SmartRoute"
-               },
-               {
-                  "dataset": "Reviews",
-                  "experiment_name": "Reviews_sub-base-123456789_K10_T100_FastSmartRoute"
-               },
-               {
-                  "dataset": "Reviews",
-                  "experiment_name": "Reviews_sub-base-123456789_K10_T100_FastSmartRoute+"
                }
             ]
          }
