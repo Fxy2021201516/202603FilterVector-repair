@@ -43,7 +43,7 @@ ROUTE_STRATEGY = {
     "default": "auto"
 }
 
-SUMMARY_OUT_DIR = os.path.join(BASE_DIR, "SelectModels_summary", "smart_route")
+SUMMARY_OUT_DIR = os.path.join(BASE_DIR, "SelectModels_summary", "smart_route_4_features")
 
 # ==========================================
 # 2. 核心功能与特征
@@ -116,7 +116,7 @@ def generate_features(df):
     # 构建单层特征
     X = pd.DataFrame(index=df.index)
     X['GlobalPpass'] = df['GlobalPpass']
-    # X['NumDescendants'] = df['NumDescendants']
+    X['NumDescendants'] = df['NumDescendants']
     X['QuerySize'] = df['QuerySize']
     X['CandSize'] = df['CandSize']
     
@@ -334,7 +334,7 @@ def process_single_dataset(dataset_name):
     print(f"{'='*70}")
     
     csv_path = os.path.join(BASE_DIR, "EDA_Plots", dataset_name, f"{dataset_name}_aligned_results.csv")
-    output_dir = os.path.join(BASE_DIR, dataset_name, "SelectModels", "smart_route")
+    output_dir = os.path.join(BASE_DIR, dataset_name, "SelectModels", "smart_route_4_features")
     os.makedirs(output_dir, exist_ok=True)
     report_path = os.path.join(output_dir, f"FastSmartRoute_Single_Report_{dataset_name}.txt")
     

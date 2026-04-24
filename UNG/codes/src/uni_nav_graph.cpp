@@ -2607,10 +2607,10 @@ namespace ANNS
          std::cout << "- Trie Method Selector is warm." << std::endl;
       }
 
-      // 预热全新的 SmartRoute (3个特征)
+      // 预热SmartRoute (特征数为 4)
       if (_smart_route_selector) {
          std::cout << "- Warming up Smart Route Selector..." << std::endl;
-         std::vector<float> dummy(3, 0.0f); 
+         std::vector<float> dummy(4, 0.0f); // <--- 关键修改：这里的 3 改成了 4
          _smart_route_selector->predict(dummy);
          std::cout << "- Smart Route Selector is warm." << std::endl;
       }
@@ -3178,20 +3178,52 @@ void UniNavGraph::calculate_query_features_only(
 
       // --- 模式 1: SmartRoute ---
       if (routing_mode == 1) {
-         // 1. 立即进行模型预测
+         // Fpass (NumDescendants)
+         auto start_fpass = std::chrono::high_resolution_clock::now();
+         size_t num_descendants = 0;
+         if (query_labels.empty()) {
+            num_descendants = _num_groups;
+         } else {
+            bool is_valid = true;
+            std::vector<const roaring::Roaring*> valid_rb;
+            for (auto label : query_labels) {
+                  if (_attr_to_id.count(label)) {
+                     valid_rb.push_back(&_group_attr_roaring_inv[_attr_to_id.at(label)]);
+                  } else {
+                     is_valid = false; break;
+                  }
+            }
+            if (is_valid) {
+                  std::sort(valid_rb.begin(), valid_rb.end(), [](const roaring::Roaring* a, const roaring::Roaring* b){
+                     return a->cardinality() < b->cardinality();
+                  });
+                  if (valid_rb.size() == 1) {
+                     num_descendants = valid_rb[0]->cardinality();
+                  } else {
+                     roaring::Roaring roar_res = *valid_rb[0] & *valid_rb[1];
+                     for (size_t i = 2; i < valid_rb.size(); ++i) {
+                        if (roar_res.isEmpty()) break;
+                        roar_res &= *valid_rb[i];
+                     }
+                     num_descendants = roar_res.cardinality();
+                  }
+            }
+         }
+         stats.fpass_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_fpass).count();
+         stats.num_lng_descendants = num_descendants;
+
+         // 2. 进行模型预测
          auto pred_start = std::chrono::high_resolution_clock::now();
          int router_decision = 0; 
          if (_smart_route_selector) {
-               // 特征输入顺序必须严格对应 Python 脚本 generate_features 函数
-               std::vector<float> features = {f_ppass, f_qsize, f_cand};
+               // 特征输入顺序严格对齐 Python: Ppass, Descendants, QuerySize, CandSize
+               std::vector<float> features = {f_ppass, static_cast<float>(num_descendants), f_qsize, f_cand};
                float pred_val = _smart_route_selector->predict(features);
                router_decision = static_cast<int>(std::round(pred_val));
          }
          stats.route_pred_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - pred_start).count();
 
-         // 2. 根据预测结果进行分流映射
-         // Target Map (来自 python): 0:UNG_Family, 1:ACORN_Family, 2:pre-filter
-         
+         // 3. 根据预测结果进行分流映射
          if (router_decision == 2) 
             return 5;
          if (router_decision == 1) 
@@ -3199,7 +3231,6 @@ void UniNavGraph::calculate_query_features_only(
          if (router_decision == 0) {
                auto els_start = std::chrono::high_resolution_clock::now();
                static std::atomic<int> counter{0};
-               // UNG 家族默认使用非递归 trie (nTfalse)
                get_min_super_sets_debug(query_labels, entry_group_ids, false, true, counter, false, is_rec_more_start, stats, false);
                stats.get_min_super_sets_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - els_start).count();
                stats.num_entry_points = entry_group_ids.size();
@@ -4047,34 +4078,36 @@ void UniNavGraph::calculate_query_features_only(
 
          auto mask_start = std::chrono::high_resolution_clock::now();
          size_t exact_cand_size = 0;
+         size_t num_descendants = 0; // Fpass 初始化
 
          if (query_labels.empty()) {
                exact_cand_size = _num_points;
+               num_descendants = _num_groups; // 空标签覆盖全组
          } else {
+               // 1. 计算 exact_cand_size (基于 _vec_attr_roaring_inv)
                bool is_valid = true;
                std::vector<const roaring::Roaring*> valid_rb;
                valid_rb.reserve(query_labels.size()); 
                
-               // 提前熔断短路逻辑
                for (auto label : query_labels) {
                   auto it = _attr_to_id.find(label);
                   if (it != _attr_to_id.end()) {
                      valid_rb.push_back(&_vec_attr_roaring_inv[it->second]);
                   } else {
-                     is_valid = false; // 查询了底库中根本不存在的属性
-                     break;            // 提前熔断，避免无意义的查询
+                     is_valid = false; 
+                     break;            
                   }
                }
                
                if (!is_valid) {
-                  exact_cand_size = 0; // 只要有一个属性不存在，交集必为 0
+                  exact_cand_size = 0; 
                } else if (!valid_rb.empty()) {
                   std::sort(valid_rb.begin(), valid_rb.end(), [](const roaring::Roaring* a, const roaring::Roaring* b){
                      return a->cardinality() < b->cardinality();
                   });
                      
                   if (valid_rb.size() == 1) {
-                     exact_cand_size = valid_rb[0]->cardinality(); // 零拷贝
+                     exact_cand_size = valid_rb[0]->cardinality();
                   } else {
                      roaring::Roaring temp_roar = *valid_rb[0];
                      for (size_t i = 1; i < valid_rb.size(); ++i) {
@@ -4084,17 +4117,54 @@ void UniNavGraph::calculate_query_features_only(
                      exact_cand_size = temp_roar.cardinality();
                   }
                }
+
+               // 2. 计算 num_descendants (基于 _group_attr_roaring_inv)
+               bool is_valid_group = true;
+               std::vector<const roaring::Roaring*> valid_group_rb;
+               valid_group_rb.reserve(query_labels.size());
+
+               for (auto label : query_labels) {
+                  auto it = _attr_to_id.find(label);
+                  if (it != _attr_to_id.end()) {
+                     valid_group_rb.push_back(&_group_attr_roaring_inv[it->second]);
+                  } else {
+                     is_valid_group = false; break;
+                  }
+               }
+               
+               if (is_valid_group && !valid_group_rb.empty()) {
+                  std::sort(valid_group_rb.begin(), valid_group_rb.end(), [](const roaring::Roaring* a, const roaring::Roaring* b){
+                     return a->cardinality() < b->cardinality();
+                  });
+                  if (valid_group_rb.size() == 1) {
+                     num_descendants = valid_group_rb[0]->cardinality();
+                  } else {
+                     roaring::Roaring temp_group_roar = *valid_group_rb[0];
+                     for (size_t i = 1; i < valid_group_rb.size(); ++i) {
+                           if (temp_group_roar.isEmpty()) break;
+                           temp_group_roar &= *valid_group_rb[i];
+                     }
+                     num_descendants = temp_group_roar.cardinality();
+                  }
+               }
          }
          
          stats.exact_cand_size = exact_cand_size;
          stats.global_p_pass = static_cast<float>(exact_cand_size) / _num_points;
+         stats.num_lng_descendants = num_descendants; // 新增：将 Fpass 存入 stats
          stats.mask_gen_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - mask_start).count();
 
-         // 如果是需要预测的 target，直接零拷贝填入 batch_features 的对应槽位
+         // 如果是需要预测的 target，填入 batch_features 的对应槽位
          int batch_idx = id_to_batch_idx[id];
          if (batch_idx != -1) {
                size_t cand_size = query_labels.empty() ? 0 : get_candidate_count_for_label(query_labels.back());
-               batch_features[batch_idx] = {stats.global_p_pass, (float)query_labels.size(), (float)cand_size};
+               // 添加 num_descendants 到批次特征，严格对齐 Python 顺序
+               batch_features[batch_idx] = {
+                   stats.global_p_pass, 
+                   static_cast<float>(num_descendants), 
+                   (float)query_labels.size(), 
+                   (float)cand_size
+               };
          }
       }
 

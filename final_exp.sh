@@ -10,9 +10,9 @@ DATASETS=(
     "Amazon"
     "BookReviews"
     "Genome"
-    "Music"
     "Reviews"
     "VariousImg"
+    "Music"
     "Tiktok"
     "Laion"
 )
