@@ -64,20 +64,21 @@
                      "Reviews": [60, 81, 180, 181],
                      "Tiktok": [400, 501, 1100, 1101]
                   },
-                  "selection_ratios": [0.2,0,1],
+                  "selection_ratios": [0.1,0.3,1],
                   "c_length_range": [1, 9],
                   "c_ppass_filters": {
-                     "Tiktok": [30, null]
+                     "Tiktok": [23, null]
                   },
+                  "b_ppass_filters": {
+                     "Tiktok": [23, null] 
+                 },
                   "global_recall_filter": {
                      "enabled": false,
                      "min_recall": 0.8
                   },
-                  "a_recall_filter": {
-                     "enabled": false,
-                     "algorithm_name": "ACORN-gamma",
-                     "min_recall": 0.9
-                  }
+                  "a_recall_filter": { "enabled": true, "algorithm_name": "UNG+", "min_recall": 0.95 },
+                  "b_recall_filter": { "enabled": true, "algorithm_name": "UNG+", "min_recall": 0.95 },
+                  "c_recall_filter": { "enabled": true, "algorithm_name": "UNG+", "min_recall": 0.95 }
                }
             },
             {
