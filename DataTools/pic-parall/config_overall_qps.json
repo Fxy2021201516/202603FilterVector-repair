@@ -1369,6 +1369,160 @@
             ]
          }
       ],
+      "smartroute_variants_plots": [
+         {
+            "enabled": true,
+            "task_name": "SmartRoute_Variants_Comparison",
+            "output_filename": "smartroute_variants.png",
+            "main_title": "Performance Comparison of SmartRoute Variants",
+            "plot_settings": {
+               "grid_layout": [2, 4],
+               "legend_cols": 5,
+               "layout_rect_top": 0.80,
+               "use_log_scale_y": false,
+               "h_pad": 1.0,
+               "w_pad": 0.0
+            },
+            "datasets_to_compare": [
+               {
+                  "dataset_name": "Amazon",
+                  "subplot_title": "Amazon",
+                  "common_parameters": {
+                     "K": 10,
+                     "threads": 100,
+                     "query_dir_name": "query_select_200_A_B_C-sub-base-123456789_random_300",
+                     "lsearch_start": 10,
+                     "lsearch_end": 200,
+                     "lsearch_step": 10,
+                     "acorn_efs_start": 200,
+                     "acorn_efs_step_slow": 200,
+                     "acorn_efs_step_fast": 200,
+                     "lsearch_threshold": 5000
+                  },
+                  "algorithms_to_compare": [  "SmartRoute", "SmartRoute+", "SmartRoute++", "SmartRoute+++" ]
+               },
+               {
+                  "dataset_name": "VariousImg",
+                  "subplot_title": "VariousImg",
+                  "common_parameters": {
+                     "K": 10,
+                     "threads": 100,
+                     "query_dir_name": "query_select_200_A_B_C-weighted-sub-base-123456789_random_300",
+                     "lsearch_start": 10,
+                     "lsearch_end": 200,
+                     "lsearch_step": 10,
+                     "acorn_efs_start": 200,
+                     "acorn_efs_step_slow": 200,
+                     "acorn_efs_step_fast": 200,
+                     "lsearch_threshold": 5000
+                  },
+                  "algorithms_to_compare": [  "SmartRoute", "SmartRoute+", "SmartRoute++", "SmartRoute+++" ]
+               },
+               {
+                  "dataset_name": "Laion",
+                  "subplot_title": "Laion",
+                  "common_parameters": {
+                     "K": 10,
+                     "threads": 100,
+                     "query_dir_name": "query_select_200_C_D-weighted-sub-base-123456789_random_300",
+                     "lsearch_start": 10,
+                     "lsearch_end": 100,
+                     "lsearch_step": 10,
+                     "acorn_efs_start": 10,
+                     "acorn_efs_step_slow": 10,
+                     "acorn_efs_step_fast": 10,
+                     "lsearch_threshold": 500000
+                  },
+                  "algorithms_to_compare": [  "SmartRoute", "SmartRoute+", "SmartRoute++", "SmartRoute+++" ]
+               },
+               {
+                  "dataset_name": "Reviews",
+                  "subplot_title": "Reviews",
+                  "common_parameters": {
+                     "K": 10,
+                     "threads": 100,
+                     "query_dir_name": "query_select_200_A_B_C-sub-base-123456789_random_300",
+                     "lsearch_start": 10,
+                     "lsearch_end": 200,
+                     "lsearch_step": 10,
+                     "acorn_efs_start": 100,
+                     "acorn_efs_step_slow": 100,
+                     "acorn_efs_step_fast": 100,
+                     "lsearch_threshold": 5000
+                  },
+                  "algorithms_to_compare": [  "SmartRoute", "SmartRoute+", "SmartRoute++", "SmartRoute+++" ]
+               },
+               {
+                  "dataset_name": "Genome",
+                  "subplot_title": "Genome",
+                  "common_parameters": {
+                     "K": 10,
+                     "threads": 100,
+                     "query_dir_name": "query_select_200_A_B_C-weighted-sub-base-123456789_random_300",
+                     "lsearch_start": 10,
+                     "lsearch_end": 200,
+                     "lsearch_step": 10,
+                     "acorn_efs_start": 100,
+                     "acorn_efs_step_slow": 100,
+                     "acorn_efs_step_fast": 100,
+                     "lsearch_threshold": 5000
+                  },
+                  "algorithms_to_compare": [  "SmartRoute", "SmartRoute+", "SmartRoute++", "SmartRoute+++" ]
+               },
+               {
+                  "dataset_name": "Tiktok",
+                  "subplot_title": "Tiktok",
+                  "common_parameters": {
+                     "K": 10,
+                     "threads": 100,
+                     "query_dir_name": "query_select_200_A_B_C-weighted-sub-base-123456789_random_300",
+                     "lsearch_start": 1000,
+                     "lsearch_end": 40000,
+                     "lsearch_step": 1000,
+                     "acorn_efs_start": 500,
+                     "acorn_efs_step_slow": 500,
+                     "acorn_efs_step_fast": 500,
+                     "lsearch_threshold": 5000
+                  },
+                  "algorithms_to_compare": [  "SmartRoute", "SmartRoute+", "SmartRoute++", "SmartRoute+++" ]
+               },
+               {
+                  "dataset_name": "Music",
+                  "subplot_title": "Music",
+                  "common_parameters": {
+                     "K": 10,
+                     "threads": 100,
+                     "query_dir_name": "query_select_200_A_B_C-weighted-sub-base-123456789_random_300",
+                     "lsearch_start": 10,
+                     "lsearch_end": 200,
+                     "lsearch_step": 10,
+                     "acorn_efs_start": 200,
+                     "acorn_efs_step_slow": 200,
+                     "acorn_efs_step_fast": 200,
+                     "lsearch_threshold": 5000
+                  },
+                  "algorithms_to_compare": [  "SmartRoute", "SmartRoute+", "SmartRoute++", "SmartRoute+++" ]
+               },
+               {
+                  "dataset_name": "BookReviews",
+                  "subplot_title": "BookReviews",
+                  "common_parameters": {
+                     "K": 10,
+                     "threads": 100,
+                     "query_dir_name": "query_select_200_B_C_D-weighted-sub-base-123456789_random_300",
+                     "lsearch_start": 10,
+                     "lsearch_end": 200,
+                     "lsearch_step": 10,
+                     "acorn_efs_start": 200,
+                     "acorn_efs_step_slow": 200,
+                     "acorn_efs_step_fast": 200,
+                     "lsearch_threshold": 5000
+                  },
+                  "algorithms_to_compare": [  "SmartRoute", "SmartRoute+", "SmartRoute++", "SmartRoute+++" ]
+               }
+            ]
+         }
+      ],
       "p_pass_comparison_plots": [
          {
             "enabled": false,

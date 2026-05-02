@@ -6,6 +6,7 @@
 #include "distance.h"
 #include "search_cache.h"
 #include "label_nav_graph.h"
+#include "rabitq_side_index.h"
 #include "vamana/vamana.h"
 #include "MethodSelector.h"
 #include "ThreadPool.h"
@@ -92,6 +93,17 @@ namespace ANNS
     double global_sort_time_ms = 0.0;  // 记录平摊后的排序耗时
     double mask_gen_time_ms = 0.0;     // 记录物理掩码生成耗时
 
+      // ===== RabitQ 细粒度时间统计 =====
+      double rabitq_ctx_prepare_time_ms = 0.0;  // query 预处理 (rotate + q_to_centroids + wrapper)
+      double rabitq_ctx_rotate_time_ms = 0.0;   // query rotate 阶段
+      double rabitq_ctx_q2c_time_ms = 0.0;      // query->centroids 距离预计算阶段
+      double rabitq_ctx_wrapper_time_ms = 0.0;  // wrapper 构造阶段
+      double rabitq_bin_time_ms = 0.0;          // bin 估计累计耗时
+      double rabitq_full_time_ms = 0.0;         // full refine 累计耗时
+      size_t rabitq_bin_calls = 0;              // bin 调用次数
+      size_t rabitq_full_calls = 0;             // full 调用次数
+      bool rabitq_ctx_reused = false;           // 本次查询是否复用已有 context
+
       
    };
    struct NewEdgeCandidate
@@ -131,6 +143,12 @@ namespace ANNS
    class UniNavGraph
    {
    public:
+      enum class UngDistanceMode
+      {
+         Exact,
+         RabitQ
+      };
+
       UniNavGraph(IdxType num_nodes) : _label_nav_graph(std::make_shared<LabelNavGraph>(num_nodes)) {} // 修改构造函数以初始化 _label_nav_graph
       UniNavGraph() = default;
       ~UniNavGraph() = default;
@@ -183,6 +201,10 @@ namespace ANNS
       // I/O
       void save(std::string index_path_prefix, std::string results_path_prefix);
       void load(std::string index_path_prefix, std::string selector_modle_prefix, const std::string &data_type, const std::string &acorn_index_path, const std::string &acorn_1_index_path, const std::string &dataset);
+      void configure_rabitq_build(bool enable, size_t total_bits);
+      void set_ung_distance_mode(const std::string &mode);
+      void prepare_rabitq_query_contexts(std::shared_ptr<IStorage> &query_storage,
+                                         const std::string &query_bin_file = "");
 
       // query generator
 
@@ -296,6 +318,23 @@ namespace ANNS
         IdxType K,
         std::pair<IdxType, float>* results,
         size_t& num_distance_calcs);
+    void search_baseline_rabitq(
+      const std::bitset<16000000>& final_bitmap,
+      IdxType K,
+      std::pair<IdxType, float>* results,
+      size_t& num_distance_calcs,
+      ANNS::rabitq::RabitQSideIndex::QueryContext& query_ctx,
+      QueryStats& stats,
+      bool use_optimized_bitset,
+      const ANNS::rabitq::RabitQSideIndex* side_index = nullptr);
+    void search_baseline_rabitq_roaring(
+      const roaring::Roaring& valid_bitmap,
+      IdxType K,
+      std::pair<IdxType, float>* results,
+      size_t& num_distance_calcs,
+      ANNS::rabitq::RabitQSideIndex::QueryContext& query_ctx,
+      QueryStats& stats,
+      const ANNS::rabitq::RabitQSideIndex* side_index = nullptr);
 
 
       // 求search中flag需要的数据结构
@@ -464,6 +503,12 @@ namespace ANNS
                                      IdxType target_id, const std::vector<IdxType> &entry_points,
                                      size_t &num_nodes_visited,
                                      bool clear_search_queue = true, bool clear_visited_set = true);
+      IdxType iterate_to_fixed_point_rabitq(const char *query, std::shared_ptr<SearchCache> search_cache,
+                                            IdxType target_id, const std::vector<IdxType> &entry_points,
+                                            size_t &num_nodes_visited,
+                                            QueryStats &stats,
+                                            ANNS::rabitq::RabitQSideIndex::QueryContext *cached_query_ctx = nullptr,
+                                            bool clear_search_queue = true, bool clear_visited_set = true);
       // search in global graph
       IdxType iterate_to_fixed_point_global(const char *query, std::shared_ptr<SearchCache> search_cache,
                                             IdxType target_id, const std::vector<IdxType> &entry_points,
@@ -484,6 +529,20 @@ namespace ANNS
       void statistics();
 
       std::string _dataset;
+      bool _build_rabitq_side_index = false;
+      size_t _rabitq_total_bits = 4;
+      double _rabitq_build_time_ms = 0.0;
+      uint64_t _rabitq_side_size_bytes = 0;
+      UngDistanceMode _ung_distance_mode = UngDistanceMode::Exact;
+      ANNS::rabitq::RabitQSideIndex _rabitq_side_index;
+      ANNS::rabitq::RabitQSideIndex _acorn_rabitq_side_index;
+      ANNS::rabitq::RabitQSideIndex _acorn_1_rabitq_side_index;
+      const IStorage *_rabitq_cached_query_storage = nullptr;
+      std::vector<std::unique_ptr<ANNS::rabitq::RabitQSideIndex::QueryContext>> _rabitq_query_ctx_cache;
+      std::vector<double> _rabitq_query_ctx_prepare_ms;
+      std::vector<double> _rabitq_query_ctx_rotate_ms;
+      std::vector<double> _rabitq_query_ctx_q2c_ms;
+      std::vector<double> _rabitq_query_ctx_wrapper_ms;
 
       // idea1 selector
       std::unique_ptr<MethodSelector> _trie_method_selector;

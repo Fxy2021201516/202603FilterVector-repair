@@ -116,6 +116,7 @@ int main(int argc, char **argv)
    int lsearch_start, lsearch_step;
    int efs_start, efs_step_slow, efs_step_fast, lsearch_threshold;
    std::string dataset; 
+   std::string ung_distance_mode = "exact";
 
    try
    {
@@ -172,7 +173,7 @@ int main(int argc, char **argv)
       desc.add_options()("num_repeats", po::value<int>(&num_repeats)->default_value(1),
                          "Number of repeats for each Lsearch value");
       desc.add_options()("routing_mode", po::value<int>(&routing_mode)->required(),
-                         "0: auto, 1: SmartRoute, 2: FastSmartRoute, 3: FastSmartRoute+");
+                         "0: auto, 1: SmartRoute, 2: FastSmartRoute, 3: FastSmartRoute+, 5: SmartRoute+, 6: SmartRoute++, 7: SmartRoute+++");
       desc.add_options()("algo_choice_csv", po::value<std::string>(&algo_choice_csv_path)->default_value(""),
                          "Optional CSV path for per-query algorithm override. Format: QueryID,Algo_Choice");
       desc.add_options()("lsearch_start", po::value<int>(&lsearch_start)->required(), "Lsearch start value");
@@ -181,6 +182,8 @@ int main(int argc, char **argv)
       desc.add_options()("efs_step_slow", po::value<int>(&efs_step_slow)->required(), "ACORN efs step value");
       desc.add_options()("efs_step_fast", po::value<int>(&efs_step_fast)->required(), "ACORN efs step value");
       desc.add_options()("lsearch_threshold", po::value<int>(&lsearch_threshold)->required(), "lsearch_threshold");
+      desc.add_options()("ung_distance_mode", po::value<std::string>(&ung_distance_mode)->default_value("exact"),
+                         "UNG distance mode: exact or rabitq");
 
       // NaviX
       desc.add_options()("navix_index_path", po::value<std::string>(&navix_index_path)->default_value(""), "Path to NaviX index");
@@ -216,6 +219,8 @@ int main(int argc, char **argv)
    // load index
    ANNS::UniNavGraph index(query_storage->get_num_points());
    index.load(index_path_prefix, selector_modle_prefix, data_type, acorn_index_path, acorn_1_index_path,dataset);
+   index.set_ung_distance_mode(ung_distance_mode);
+   index.prepare_rabitq_query_contexts(query_storage, query_bin_file);
    index.load_bipartite_graph(index_path_prefix + "vector_attr_graph");
    index.build_group_inverted_indices();
    index.build_vector_inverted_indices();
@@ -223,7 +228,7 @@ int main(int argc, char **argv)
 
    // Naxiv
    faiss_navix::IndexHNSWFlat* navix_index = nullptr;
-   if (routing_mode == 6 || routing_mode == 0) { // 强制使用 NaviX 或 自动模式时加载
+   if (routing_mode == 0) { // 自动模式时加载 NaviX（按需）
       if (!navix_index_path.empty() && fs::exists(navix_index_path)) {
          std::cout << "[SmartRoute] Loading NaviX index from: " << navix_index_path << std::endl;
          faiss_navix::Index* raw_navix = faiss_navix::read_index(navix_index_path.c_str());
@@ -263,7 +268,7 @@ int main(int argc, char **argv)
    auto results = new std::pair<ANNS::IdxType, float>[num_queries * K];
    std::vector<int> query_algo_choices = index.load_query_algo_choices_from_csv(algo_choice_csv_path, num_queries);
 
-   // ==================== [SmartRoute+ 全局预处理 (仅执行1次)] ====================
+   // ==================== [SmartRoute+/SmartRoute+++ 全局预处理 (仅执行1次)] ====================
    std::vector<ANNS::QueryStats> global_pred_stats(num_queries);
    double total_global_pred_time = 0.0;
    double total_global_sort_time = 0.0;
@@ -271,7 +276,7 @@ int main(int argc, char **argv)
    std::vector<int> sorted_query_ids(num_queries);
    std::iota(sorted_query_ids.begin(), sorted_query_ids.end(), 0);
 
-   if (routing_mode == 5) {
+   if (routing_mode == 5 || routing_mode == 7) {
        // --- 循环多次，取全局预测的最短时间 ---
        double min_pred_time = std::numeric_limits<double>::max();
        std::vector<int> best_choices;
@@ -286,7 +291,7 @@ int main(int argc, char **argv)
            );
            double trial_time = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - global_pred_start).count();
            
-           std::cout << "[SmartRoute+] Trial " << trial + 1 << " Prediction Time: " << trial_time << " ms" << std::endl;
+           std::cout << "[SmartRoute" << (routing_mode == 7 ? "+++" : "+") << "] Trial " << trial + 1 << " Prediction Time: " << trial_time << " ms" << std::endl;
            
            if (trial_time < min_pred_time) {
                min_pred_time = trial_time;
@@ -299,19 +304,19 @@ int main(int argc, char **argv)
        final_global_choices = std::move(best_choices);
        global_pred_stats = std::move(best_stats);
        total_global_pred_time = min_pred_time;
-       std::cout << "\n[SmartRoute+] Best Global Prediction Time: " << total_global_pred_time << " ms" << std::endl;
+       std::cout << "\n[SmartRoute" << (routing_mode == 7 ? "+++" : "+") << "] Best Global Prediction Time: " << total_global_pred_time << " ms" << std::endl;
 
        // 2. 全局缓存友好排序
        auto global_sort_start = std::chrono::high_resolution_clock::now();
        sorted_query_ids = index.get_sorted_query_ids(query_storage, final_global_choices, routing_mode);
        total_global_sort_time = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - global_sort_start).count();
-       std::cout << "[SmartRoute+] Global Sort Time: " << total_global_sort_time << " ms" << std::endl;
+       std::cout << "[SmartRoute" << (routing_mode == 7 ? "+++" : "+") << "] Global Sort Time: " << total_global_sort_time << " ms" << std::endl;
 
        double avg_sort_ms = total_global_sort_time / num_queries;
        for (int i = 0; i < (int)num_queries; ++i) {
            global_pred_stats[i].global_sort_time_ms = avg_sort_ms;
        }
-       std::cout << "[SmartRoute+] Total Preprocessing Time: " << (total_global_pred_time + total_global_sort_time) << " ms" << std::endl;
+       std::cout << "[SmartRoute" << (routing_mode == 7 ? "+++" : "+") << "] Total Preprocessing Time: " << (total_global_pred_time + total_global_sort_time) << " ms" << std::endl;
    }
    // ====================================================================================
 
@@ -374,17 +379,7 @@ int main(int argc, char **argv)
 //              << std::endl;
 //    auto bitmap_total_time = attr_bitmap_total_time; // 默认使用倒排索引方法
 
-   // if (routing_mode == 0){
-   //    // calculate query features and save to CSV
-   //    std::string features_csv_path = result_path_prefix + "query_features.csv";
-   //    index.calculate_query_features_only(
-   //       query_storage,
-   //       num_threads,       
-   //       features_csv_path, 
-   //       true,              // is_new_trie_method
-   //       true               // is_rec_more_start
-   //    );
-   // }
+
       
 
    // 5-Method Fpass Benchmark
@@ -397,11 +392,22 @@ int main(int argc, char **argv)
    index.warmup_selectors(num_threads);
    std::cout << "--- Warm-up Finished ---"<< std::endl;
 
-   if (baseline_alg == 8 || routing_mode == 1 || routing_mode == 5) {
+   if (baseline_alg == 8 || routing_mode == 1 || routing_mode == 5 || routing_mode == 6 || routing_mode == 7) {
     index.skip_els_filter = true;
     std::cout << "[UNG+] Mode Enabled: ELS filtering will be skipped." << std::endl;
 }
 
+   if (routing_mode == 0){
+   // calculate query features and save to CSV
+   std::string features_csv_path = result_path_prefix + "query_features.csv";
+   index.calculate_query_features_only(
+      query_storage,
+      num_threads,       
+      features_csv_path, 
+      true,              // is_new_trie_method
+      true               // is_rec_more_start
+   );
+   }
    // init query stats
    std::vector<std::vector<std::vector<ANNS::QueryStats>>> query_stats(num_repeats, std::vector<std::vector<ANNS::QueryStats>>(Lsearch_list.size(), std::vector<ANNS::QueryStats>(num_queries))); //(repeat,Lsearch,queryID)
 
@@ -449,7 +455,7 @@ int main(int argc, char **argv)
              task_queue.push(id);
          }
 
-         if (routing_mode == 5) {
+         if (routing_mode == 5 || routing_mode == 7) {
              for (int i = 0; i < (int)num_queries; ++i) {
                  query_stats[repeat][LsearchId][i].mask_gen_time_ms = global_pred_stats[i].mask_gen_time_ms;
                  query_stats[repeat][LsearchId][i].route_pred_time_ms = global_pred_stats[i].route_pred_time_ms;
@@ -474,7 +480,7 @@ int main(int argc, char **argv)
          
          // --- 3. 批次时间补偿 ---
          double time_cost = pure_search_time;
-         if (routing_mode == 5) {
+         if (routing_mode == 5 || routing_mode == 7) {
              time_cost += (total_global_pred_time + total_global_sort_time);
          }
          
@@ -653,6 +659,8 @@ int main(int argc, char **argv)
               << "ELS_TrieT_ms,ELS_SortT_ms,ELS_FilterT_ms,ELS_TotalT_ms,"
             //   << "IntelELS_PredT_ms,Route_PredT_ms,FpassT_ms,Routing_TotalT_ms,BitmapT_new_ms,FeatureT_ms," 
               << "IntelELS_PredT_ms,Route_PredT_ms,Mask_GenT_ms,Global_SortT_ms,FpassT_ms,Routing_TotalT_ms,BitmapT_new_ms,FeatureT_ms,"
+              << "RabitQ_CtxPrepareT_ms,RabitQ_CtxRotateT_ms,RabitQ_CtxQ2CentroidsT_ms,RabitQ_CtxWrapperT_ms,"
+              << "RabitQ_BinT_ms,RabitQ_FullT_ms,RabitQ_BinCalls,RabitQ_FullCalls,RabitQ_CtxReused,"
               << "AcornFilterType,"
               << "QuerySize,CandSize,ExactCandSize,GlobalPpass,"
               << "NumEntries,NumDescendants"
@@ -690,6 +698,15 @@ int main(int argc, char **argv)
                        << stats.routing_total_time_ms << ","
                        << stats.bitmap_time_ms << ","
                        << stats.feature_extract_time_ms << ","
+                       << stats.rabitq_ctx_prepare_time_ms << ","
+                       << stats.rabitq_ctx_rotate_time_ms << ","
+                       << stats.rabitq_ctx_q2c_time_ms << ","
+                       << stats.rabitq_ctx_wrapper_time_ms << ","
+                       << stats.rabitq_bin_time_ms << ","
+                       << stats.rabitq_full_time_ms << ","
+                       << stats.rabitq_bin_calls << ","
+                       << stats.rabitq_full_calls << ","
+                       << stats.rabitq_ctx_reused << ","
                        << stats.acorn_filter_type << ","
                        // Idea1 & Trie 特征
                        << stats.query_length << ","

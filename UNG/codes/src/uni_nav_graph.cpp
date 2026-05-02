@@ -8,6 +8,7 @@
 #include <stack>
 #include <bitset>
 #include <cstring>
+#include <cctype>
 
 #include <random>
 #include <fstream>
@@ -62,6 +63,447 @@ struct TreeInfo
 
 namespace ANNS
 {
+   namespace
+   {
+      class ACORNRabitQDistanceBackend final : public faiss::ACORNDistanceBackend
+      {
+         public:
+            struct Snapshot
+            {
+               double ctx_prepare_time_ms = 0.0;
+               double ctx_rotate_time_ms = 0.0;
+               double ctx_q2c_time_ms = 0.0;
+               double ctx_wrapper_time_ms = 0.0;
+               double bin_time_ms = 0.0;
+               double full_time_ms = 0.0;
+               size_t bin_calls = 0;
+               size_t full_calls = 0;
+               size_t prepare_calls = 0;
+            };
+
+            explicit ACORNRabitQDistanceBackend(const ANNS::rabitq::RabitQSideIndex *side_index)
+                : side_index_(side_index), shared_metrics_(std::make_shared<SharedMetrics>())
+            {
+            }
+
+            ~ACORNRabitQDistanceBackend() override
+            {
+               flush_local_to_shared();
+            }
+
+            std::unique_ptr<faiss::ACORNDistanceBackend> clone() const override
+            {
+               return std::unique_ptr<faiss::ACORNDistanceBackend>(
+                   new ACORNRabitQDistanceBackend(side_index_, shared_metrics_));
+            }
+
+            bool prepare_query(const float *x) override
+            {
+               if (side_index_ == nullptr || !side_index_->enabled() || x == nullptr)
+               {
+                  return false;
+               }
+               query_ctx_ = ANNS::rabitq::RabitQSideIndex::QueryContext{};
+               top_full_worst_ = std::priority_queue<float>();
+               auto begin = std::chrono::high_resolution_clock::now();
+               ANNS::rabitq::RabitQSideIndex::InitTiming init_timing;
+               const bool ok = side_index_->init_query(reinterpret_cast<const char *>(x), query_ctx_, &init_timing);
+               const uint64_t elapsed_ns = static_cast<uint64_t>(
+                   std::chrono::duration_cast<std::chrono::nanoseconds>(
+                       std::chrono::high_resolution_clock::now() - begin)
+                       .count());
+               if (ok)
+               {
+                  local_metrics_.ctx_prepare_time_ns += elapsed_ns;
+                  local_metrics_.ctx_rotate_time_ns += ms_to_ns(init_timing.rotate_ms);
+                  local_metrics_.ctx_q2c_time_ns += ms_to_ns(init_timing.q_to_centroids_ms);
+                  local_metrics_.ctx_wrapper_time_ns += ms_to_ns(init_timing.wrapper_ms);
+                  local_metrics_.prepare_calls += 1;
+               }
+               return ok;
+            }
+
+            float distance(faiss::idx_t i) override
+            {
+               if (side_index_ == nullptr || i < 0)
+               {
+                  return std::numeric_limits<float>::max();
+               }
+               // Two-stage accounting for ACORN RabitQ path:
+               // 1) estimate_bin for coarse timing/call stats
+               // 2) estimate_full for final returned distance (keeps correctness aligned with exact scoring semantics)
+               float low_dist = 0.0F;
+               local_metrics_.bin_calls += 1;
+               distance_calls_ += 1;
+               float bin_dist = 0.0F;
+               if (should_sample(distance_calls_))
+               {
+                  auto bin_begin = std::chrono::high_resolution_clock::now();
+                  bin_dist = side_index_->estimate_bin(static_cast<ANNS::IdxType>(i), query_ctx_, &low_dist);
+                  const uint64_t bin_elapsed_ns = static_cast<uint64_t>(
+                      std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::high_resolution_clock::now() - bin_begin)
+                          .count());
+                  local_metrics_.bin_time_ns += (bin_elapsed_ns * kSamplePeriod);
+               }
+               else
+               {
+                  bin_dist = side_index_->estimate_bin(static_cast<ANNS::IdxType>(i), query_ctx_, &low_dist);
+               }
+
+               // Adaptive two-stage refinement:
+               // - warmup: compute some full distances to bootstrap a cutoff
+               // - steady-state: only refine when low_bound looks competitive
+               bool should_refine = false;
+               if (top_full_worst_.size() < full_warmup_)
+               {
+                  should_refine = true;
+               }
+               else if (!top_full_worst_.empty())
+               {
+                  const float cutoff = top_full_worst_.top();
+                  should_refine = (low_dist < cutoff);
+               }
+
+               if (!should_refine)
+               {
+                  return bin_dist;
+               }
+
+               local_metrics_.full_calls += 1;
+               float full_dist = 0.0F;
+               if (should_sample(local_metrics_.full_calls))
+               {
+                  auto full_begin = std::chrono::high_resolution_clock::now();
+                  full_dist = side_index_->estimate_full(static_cast<ANNS::IdxType>(i), query_ctx_, nullptr);
+                  const uint64_t full_elapsed_ns = static_cast<uint64_t>(
+                      std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::high_resolution_clock::now() - full_begin)
+                          .count());
+                  local_metrics_.full_time_ns += (full_elapsed_ns * kSamplePeriod);
+               }
+               else
+               {
+                  full_dist = side_index_->estimate_full(static_cast<ANNS::IdxType>(i), query_ctx_, nullptr);
+               }
+
+               if (top_full_worst_.size() < full_keep_)
+               {
+                  top_full_worst_.push(full_dist);
+               }
+               else if (full_dist < top_full_worst_.top())
+               {
+                  top_full_worst_.pop();
+                  top_full_worst_.push(full_dist);
+               }
+               return full_dist;
+            }
+
+            Snapshot snapshot() const
+            {
+               flush_local_to_shared();
+               Snapshot out;
+               out.ctx_prepare_time_ms = ns_to_ms(shared_metrics_->ctx_prepare_time_ns.load(std::memory_order_relaxed));
+               out.ctx_rotate_time_ms = ns_to_ms(shared_metrics_->ctx_rotate_time_ns.load(std::memory_order_relaxed));
+               out.ctx_q2c_time_ms = ns_to_ms(shared_metrics_->ctx_q2c_time_ns.load(std::memory_order_relaxed));
+               out.ctx_wrapper_time_ms = ns_to_ms(shared_metrics_->ctx_wrapper_time_ns.load(std::memory_order_relaxed));
+               out.bin_time_ms = ns_to_ms(shared_metrics_->bin_time_ns.load(std::memory_order_relaxed));
+               out.full_time_ms = ns_to_ms(shared_metrics_->full_time_ns.load(std::memory_order_relaxed));
+               out.bin_calls = static_cast<size_t>(shared_metrics_->bin_calls.load(std::memory_order_relaxed));
+               out.full_calls = static_cast<size_t>(shared_metrics_->full_calls.load(std::memory_order_relaxed));
+               out.prepare_calls = static_cast<size_t>(shared_metrics_->prepare_calls.load(std::memory_order_relaxed));
+               return out;
+            }
+
+         private:
+            struct LocalMetrics
+            {
+               uint64_t ctx_prepare_time_ns = 0;
+               uint64_t ctx_rotate_time_ns = 0;
+               uint64_t ctx_q2c_time_ns = 0;
+               uint64_t ctx_wrapper_time_ns = 0;
+               uint64_t bin_time_ns = 0;
+               uint64_t full_time_ns = 0;
+               uint64_t bin_calls = 0;
+               uint64_t full_calls = 0;
+               uint64_t prepare_calls = 0;
+            };
+
+            struct SharedMetrics
+            {
+               std::atomic<uint64_t> ctx_prepare_time_ns{0};
+               std::atomic<uint64_t> ctx_rotate_time_ns{0};
+               std::atomic<uint64_t> ctx_q2c_time_ns{0};
+               std::atomic<uint64_t> ctx_wrapper_time_ns{0};
+               std::atomic<uint64_t> bin_time_ns{0};
+               std::atomic<uint64_t> full_time_ns{0};
+               std::atomic<uint64_t> bin_calls{0};
+               std::atomic<uint64_t> full_calls{0};
+               std::atomic<uint64_t> prepare_calls{0};
+            };
+
+            ACORNRabitQDistanceBackend(
+                const ANNS::rabitq::RabitQSideIndex *side_index,
+                std::shared_ptr<SharedMetrics> shared_metrics)
+                : side_index_(side_index), shared_metrics_(std::move(shared_metrics))
+            {
+            }
+
+            static uint64_t ms_to_ns(double ms)
+            {
+               return static_cast<uint64_t>(std::max(0.0, ms) * 1000000.0);
+            }
+
+            static double ns_to_ms(uint64_t ns)
+            {
+               return static_cast<double>(ns) / 1000000.0;
+            }
+
+            static bool should_sample(uint64_t counter)
+            {
+               return (counter % kSamplePeriod) == 0;
+            }
+
+            void flush_local_to_shared() const
+            {
+               if (local_flushed_)
+               {
+                  return;
+               }
+               local_flushed_ = true;
+               if (local_metrics_.ctx_prepare_time_ns)
+                  shared_metrics_->ctx_prepare_time_ns.fetch_add(local_metrics_.ctx_prepare_time_ns, std::memory_order_relaxed);
+               if (local_metrics_.ctx_rotate_time_ns)
+                  shared_metrics_->ctx_rotate_time_ns.fetch_add(local_metrics_.ctx_rotate_time_ns, std::memory_order_relaxed);
+               if (local_metrics_.ctx_q2c_time_ns)
+                  shared_metrics_->ctx_q2c_time_ns.fetch_add(local_metrics_.ctx_q2c_time_ns, std::memory_order_relaxed);
+               if (local_metrics_.ctx_wrapper_time_ns)
+                  shared_metrics_->ctx_wrapper_time_ns.fetch_add(local_metrics_.ctx_wrapper_time_ns, std::memory_order_relaxed);
+               if (local_metrics_.bin_time_ns)
+                  shared_metrics_->bin_time_ns.fetch_add(local_metrics_.bin_time_ns, std::memory_order_relaxed);
+               if (local_metrics_.full_time_ns)
+                  shared_metrics_->full_time_ns.fetch_add(local_metrics_.full_time_ns, std::memory_order_relaxed);
+               if (local_metrics_.bin_calls)
+                  shared_metrics_->bin_calls.fetch_add(local_metrics_.bin_calls, std::memory_order_relaxed);
+               if (local_metrics_.full_calls)
+                  shared_metrics_->full_calls.fetch_add(local_metrics_.full_calls, std::memory_order_relaxed);
+               if (local_metrics_.prepare_calls)
+                  shared_metrics_->prepare_calls.fetch_add(local_metrics_.prepare_calls, std::memory_order_relaxed);
+            }
+
+            const ANNS::rabitq::RabitQSideIndex *side_index_ = nullptr;
+            ANNS::rabitq::RabitQSideIndex::QueryContext query_ctx_{};
+            std::shared_ptr<SharedMetrics> shared_metrics_;
+            mutable LocalMetrics local_metrics_{};
+            mutable bool local_flushed_ = false;
+            uint64_t distance_calls_ = 0;
+            std::priority_queue<float> top_full_worst_{};
+            size_t full_warmup_ = 128;
+            size_t full_keep_ = 256;
+            static constexpr uint64_t kSamplePeriod = 32;
+      };
+   } // namespace
+
+
+   void UniNavGraph::configure_rabitq_build(bool enable, size_t total_bits)
+   {
+      if (!enable)
+      {
+         _build_rabitq_side_index = false;
+         _rabitq_total_bits = total_bits;
+         return;
+      }
+
+      if (total_bits < 1 || total_bits > 9)
+      {
+         std::cerr << "[RabitQ] Invalid total_bits=" << total_bits
+                   << ", expected [1, 9]. Disable RabitQ side-index build." << std::endl;
+         _build_rabitq_side_index = false;
+         _rabitq_total_bits = 4;
+         return;
+      }
+
+      _build_rabitq_side_index = true;
+      _rabitq_total_bits = total_bits;
+   }
+
+   void UniNavGraph::set_ung_distance_mode(const std::string &mode)
+   {
+      std::string lowered = mode;
+      std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) {
+         return static_cast<char>(std::tolower(c));
+      });
+
+      if (lowered == "rabitq")
+      {
+         _ung_distance_mode = UngDistanceMode::RabitQ;
+         if (!_rabitq_side_index.enabled() &&
+             !_acorn_rabitq_side_index.enabled() &&
+             !_acorn_1_rabitq_side_index.enabled())
+         {
+            std::cerr << "[RabitQ] Distance mode is set to rabitq, but side index is not available. "
+                      << "UNG will fallback to exact distance at query time." << std::endl;
+         }
+      }
+      else
+      {
+         if (lowered != "exact")
+         {
+            std::cerr << "[RabitQ] Unknown ung_distance_mode='" << mode
+                      << "', fallback to exact." << std::endl;
+         }
+         _ung_distance_mode = UngDistanceMode::Exact;
+      }
+   }
+
+   void UniNavGraph::prepare_rabitq_query_contexts(std::shared_ptr<IStorage> &query_storage,
+                                                   const std::string &query_bin_file)
+   {
+      if (_ung_distance_mode != UngDistanceMode::RabitQ || !_rabitq_side_index.enabled())
+      {
+         return;
+      }
+      if (!query_storage)
+      {
+         return;
+      }
+
+      const auto num_queries = query_storage->get_num_points();
+      const bool need_refresh =
+          (_rabitq_cached_query_storage != query_storage.get()) ||
+          (_rabitq_query_ctx_cache.size() != num_queries);
+
+      if (!need_refresh)
+      {
+         return;
+      }
+
+      std::string cache_file_path;
+      if (!query_bin_file.empty())
+      {
+         fs::path query_path(query_bin_file);
+         cache_file_path = (query_path.parent_path() / "query_rabitq_ctx_cache.bin").string();
+      }
+
+      if (!cache_file_path.empty())
+      {
+         std::vector<std::unique_ptr<ANNS::rabitq::RabitQSideIndex::QueryContext>> loaded_cache;
+         if (_rabitq_side_index.load_query_context_cache(cache_file_path, loaded_cache) &&
+             loaded_cache.size() == static_cast<size_t>(num_queries))
+         {
+            _rabitq_query_ctx_cache = std::move(loaded_cache);
+            _rabitq_query_ctx_prepare_ms.assign(num_queries, 0.0);
+            _rabitq_query_ctx_rotate_ms.assign(num_queries, 0.0);
+            _rabitq_query_ctx_q2c_ms.assign(num_queries, 0.0);
+            _rabitq_query_ctx_wrapper_ms.assign(num_queries, 0.0);
+            _rabitq_cached_query_storage = query_storage.get();
+            std::cout << "[RabitQ] Query contexts loaded from cache: " << cache_file_path << std::endl;
+            return;
+         }
+      }
+
+      std::cout << "[RabitQ] Preparing query contexts for reuse ..." << std::endl;
+      auto prep_all_start = std::chrono::high_resolution_clock::now();
+      _rabitq_query_ctx_cache.clear();
+      _rabitq_query_ctx_cache.resize(num_queries);
+      _rabitq_query_ctx_prepare_ms.assign(num_queries, 0.0);
+      _rabitq_query_ctx_rotate_ms.assign(num_queries, 0.0);
+      _rabitq_query_ctx_q2c_ms.assign(num_queries, 0.0);
+      _rabitq_query_ctx_wrapper_ms.assign(num_queries, 0.0);
+
+      std::atomic<bool> all_ok{true};
+      const IdxType invalid_query_id = std::numeric_limits<IdxType>::max();
+      std::atomic<IdxType> first_failed_query_id{invalid_query_id};
+      std::atomic<IdxType> prepared_count{0};
+      const IdxType progress_step = 1000;
+      const int omp_threads = std::max<int>(1, std::min<int>(
+          static_cast<int>(num_queries), omp_get_max_threads()));
+      std::cout << "[RabitQ] Query context prepare OpenMP threads: "
+                << omp_threads << std::endl;
+
+#pragma omp parallel for schedule(dynamic, 64) num_threads(omp_threads)
+      for (IdxType query_id = 0; query_id < num_queries; ++query_id)
+      {
+         if (!all_ok.load(std::memory_order_relaxed))
+         {
+            continue;
+         }
+
+         auto per_start = std::chrono::high_resolution_clock::now();
+         auto ctx = std::make_unique<ANNS::rabitq::RabitQSideIndex::QueryContext>();
+         ANNS::rabitq::RabitQSideIndex::InitTiming init_timing;
+         if (!_rabitq_side_index.init_query(query_storage->get_vector(query_id), *ctx, &init_timing))
+         {
+            all_ok.store(false, std::memory_order_relaxed);
+            IdxType expected = invalid_query_id;
+            first_failed_query_id.compare_exchange_strong(expected, query_id, std::memory_order_relaxed);
+            continue;
+         }
+         _rabitq_query_ctx_prepare_ms[query_id] = std::chrono::duration<double, std::milli>(
+             std::chrono::high_resolution_clock::now() - per_start
+         ).count();
+         _rabitq_query_ctx_rotate_ms[query_id] = init_timing.rotate_ms;
+         _rabitq_query_ctx_q2c_ms[query_id] = init_timing.q_to_centroids_ms;
+         _rabitq_query_ctx_wrapper_ms[query_id] = init_timing.wrapper_ms;
+         _rabitq_query_ctx_cache[query_id] = std::move(ctx);
+
+         const IdxType done = prepared_count.fetch_add(1, std::memory_order_relaxed) + 1;
+         if (done == num_queries || done % progress_step == 0)
+         {
+            const double elapsed_ms = std::chrono::duration<double, std::milli>(
+                std::chrono::high_resolution_clock::now() - prep_all_start
+            ).count();
+            const double progress = (num_queries > 0)
+                                        ? (100.0 * static_cast<double>(done) /
+                                           static_cast<double>(num_queries))
+                                        : 100.0;
+#pragma omp critical(rabitq_progress_log)
+            {
+               std::cout << "[RabitQ] Query context prepare progress: "
+                         << done << "/" << num_queries
+                         << " (" << std::fixed << std::setprecision(1)
+                         << progress << "%), elapsed="
+                         << std::setprecision(1) << elapsed_ms << " ms"
+                         << std::defaultfloat << std::endl;
+            }
+         }
+      }
+
+      if (!all_ok.load(std::memory_order_relaxed))
+      {
+         const IdxType failed_id = first_failed_query_id.load(std::memory_order_relaxed);
+         std::cerr << "[RabitQ] Failed to prepare query context for query "
+                   << failed_id << ", fallback to per-query initialization." << std::endl;
+         _rabitq_query_ctx_cache.clear();
+         _rabitq_query_ctx_prepare_ms.clear();
+         _rabitq_query_ctx_rotate_ms.clear();
+         _rabitq_query_ctx_q2c_ms.clear();
+         _rabitq_query_ctx_wrapper_ms.clear();
+         _rabitq_cached_query_storage = nullptr;
+         return;
+      }
+
+      if (all_ok.load(std::memory_order_relaxed))
+      {
+         _rabitq_cached_query_storage = query_storage.get();
+         const double total_ms = std::chrono::duration<double, std::milli>(
+             std::chrono::high_resolution_clock::now() - prep_all_start
+         ).count();
+         std::cout << "[RabitQ] Query contexts prepared in " << total_ms
+                   << " ms and will be reused across Lsearch runs." << std::endl;
+         if (!cache_file_path.empty())
+         {
+            if (_rabitq_side_index.save_query_context_cache(cache_file_path, _rabitq_query_ctx_cache))
+            {
+               std::cout << "[RabitQ] Query contexts saved to cache: " << cache_file_path << std::endl;
+            }
+            else
+            {
+               std::cerr << "[RabitQ] Failed to save query context cache: " << cache_file_path << std::endl;
+            }
+         }
+      }
+   }
 
    void UniNavGraph::build(std::shared_ptr<IStorage> base_storage, std::shared_ptr<DistanceHandler> distance_handler,
                            std::string scenario, std::string index_name, uint32_t num_threads, IdxType num_cross_edges,
@@ -150,6 +592,63 @@ namespace ANNS
                 num_threads,
                 new_cross_edge);
          }
+      }
+
+      if (_build_rabitq_side_index)
+      {
+         std::cout << "Building RabitQ side index for UNG search..." << std::endl;
+         auto rabitq_start = std::chrono::high_resolution_clock::now();
+
+         // Build RabitQ clusters by first metadata label (metadata[i][0]),
+         // instead of UNG internal group_id, to align with ACORN RabitQ grouping.
+         std::vector<IdxType> rabitq_point_to_group(_num_points, 1);
+         std::unordered_map<int64_t, IdxType> first_label_to_group;
+         IdxType next_group_id = 1;
+         for (IdxType point_id = 0; point_id < _num_points; ++point_id)
+         {
+            const auto &label_set = _base_storage->get_label_set(point_id);
+            const int64_t first_label = label_set.empty() ? -1LL : static_cast<int64_t>(label_set[0]);
+            auto it = first_label_to_group.find(first_label);
+            if (it == first_label_to_group.end())
+            {
+               first_label_to_group[first_label] = next_group_id;
+               rabitq_point_to_group[point_id] = next_group_id;
+               ++next_group_id;
+            }
+            else
+            {
+               rabitq_point_to_group[point_id] = it->second;
+            }
+         }
+         const IdxType rabitq_num_groups = next_group_id - 1;
+         std::cout << "[RabitQ] Grouping by metadata[i][0], num_groups=" << rabitq_num_groups << std::endl;
+
+         const bool ok = _rabitq_side_index.build(
+             _base_storage,
+             rabitq_point_to_group,
+             rabitq_num_groups,
+             _rabitq_total_bits
+         );
+         if (!ok)
+         {
+            _rabitq_build_time_ms = std::chrono::duration<double, std::milli>(
+                                       std::chrono::high_resolution_clock::now() - rabitq_start)
+                                       .count();
+            std::cerr << "[RabitQ] Failed to build side index. Falling back to exact distance mode." << std::endl;
+         }
+         else
+         {
+            _rabitq_build_time_ms = std::chrono::duration<double, std::milli>(
+                                       std::chrono::high_resolution_clock::now() - rabitq_start)
+                                       .count();
+            std::cout << "[RabitQ] Side index built in "
+                      << _rabitq_build_time_ms
+                      << " ms" << std::endl;
+         }
+      }
+      else
+      {
+         _rabitq_build_time_ms = 0.0;
       }
 
       // index time
@@ -1346,6 +1845,153 @@ namespace ANNS
       size_t valid_k = top_k_heap.size();
       for (int i = valid_k - 1; i >= 0; --i) {
          results[i].first = top_k_heap.top().second; 
+         results[i].second = top_k_heap.top().first;
+         top_k_heap.pop();
+      }
+   }
+
+   void UniNavGraph::search_baseline_rabitq(
+      const std::bitset<16000000>& final_bitmap,
+      IdxType K,
+      std::pair<IdxType, float>* results,
+      size_t& num_distance_calcs,
+      ANNS::rabitq::RabitQSideIndex::QueryContext& query_ctx,
+      QueryStats& stats,
+      bool use_optimized_bitset,
+      const ANNS::rabitq::RabitQSideIndex* side_index)
+   {
+      const ANNS::rabitq::RabitQSideIndex* active_side_index =
+          (side_index != nullptr) ? side_index : &_rabitq_side_index;
+
+      num_distance_calcs = 0;
+      for (IdxType i = 0; i < K; ++i) {
+         results[i].first = static_cast<IdxType>(-1);
+         results[i].second = std::numeric_limits<float>::max();
+      }
+
+      std::priority_queue<std::pair<float, IdxType>> top_k_heap;
+
+      auto process_candidate = [&](IdxType vec_id) {
+         float low_dist = 0.0F;
+         auto bin_start = std::chrono::high_resolution_clock::now();
+         float dist = active_side_index->estimate_bin(vec_id, query_ctx, &low_dist);
+         stats.rabitq_bin_time_ms += std::chrono::duration<double, std::milli>(
+            std::chrono::high_resolution_clock::now() - bin_start
+         ).count();
+         stats.rabitq_bin_calls += 1;
+         num_distance_calcs += 1;
+
+         bool should_refine = false;
+         if (top_k_heap.size() >= K) {
+            should_refine = low_dist < top_k_heap.top().first;
+         }
+         if (should_refine) {
+            float refined_low = 0.0F;
+            auto full_start = std::chrono::high_resolution_clock::now();
+            dist = active_side_index->estimate_full(vec_id, query_ctx, &refined_low);
+            stats.rabitq_full_time_ms += std::chrono::duration<double, std::milli>(
+               std::chrono::high_resolution_clock::now() - full_start
+            ).count();
+            stats.rabitq_full_calls += 1;
+            num_distance_calcs += 1;
+            (void)refined_low;
+         }
+
+         if (top_k_heap.size() < K) {
+            top_k_heap.push({dist, vec_id});
+         } else if (dist < top_k_heap.top().first) {
+            top_k_heap.pop();
+            top_k_heap.push({dist, vec_id});
+         }
+      };
+
+      if (use_optimized_bitset) {
+         const uint64_t* bit_words = reinterpret_cast<const uint64_t*>(&final_bitmap);
+         size_t num_words = _num_points / 64 + (_num_points % 64 != 0 ? 1 : 0);
+         for (size_t w = 0; w < num_words; ++w) {
+            uint64_t word = bit_words[w];
+            if (word == 0) continue;
+            while (word != 0) {
+               int bit_idx = __builtin_ctzll(word);
+               IdxType vec_id = static_cast<IdxType>(w * 64 + bit_idx);
+               if (vec_id >= _num_points) break;
+               process_candidate(vec_id);
+               word &= (word - 1);
+            }
+         }
+      } else {
+         for (IdxType vec_id = 0; vec_id < _num_points; ++vec_id) {
+            if (final_bitmap.test(vec_id)) {
+               process_candidate(vec_id);
+            }
+         }
+      }
+
+      size_t valid_k = top_k_heap.size();
+      for (int i = static_cast<int>(valid_k) - 1; i >= 0; --i) {
+         results[i].first = top_k_heap.top().second;
+         results[i].second = top_k_heap.top().first;
+         top_k_heap.pop();
+      }
+   }
+
+   void UniNavGraph::search_baseline_rabitq_roaring(
+      const roaring::Roaring& valid_bitmap,
+      IdxType K,
+      std::pair<IdxType, float>* results,
+      size_t& num_distance_calcs,
+      ANNS::rabitq::RabitQSideIndex::QueryContext& query_ctx,
+      QueryStats& stats,
+      const ANNS::rabitq::RabitQSideIndex* side_index)
+   {
+      const ANNS::rabitq::RabitQSideIndex* active_side_index =
+          (side_index != nullptr) ? side_index : &_rabitq_side_index;
+
+      num_distance_calcs = 0;
+      for (IdxType i = 0; i < K; ++i) {
+         results[i].first = static_cast<IdxType>(-1);
+         results[i].second = std::numeric_limits<float>::max();
+      }
+
+      std::priority_queue<std::pair<float, IdxType>> top_k_heap;
+
+      for (uint32_t vec_id : valid_bitmap) {
+         float low_dist = 0.0F;
+         auto bin_start = std::chrono::high_resolution_clock::now();
+         float dist = active_side_index->estimate_bin(static_cast<IdxType>(vec_id), query_ctx, &low_dist);
+         stats.rabitq_bin_time_ms += std::chrono::duration<double, std::milli>(
+            std::chrono::high_resolution_clock::now() - bin_start
+         ).count();
+         stats.rabitq_bin_calls += 1;
+         num_distance_calcs += 1;
+
+         bool should_refine = false;
+         if (top_k_heap.size() >= K) {
+            should_refine = low_dist < top_k_heap.top().first;
+         }
+         if (should_refine) {
+            float refined_low = 0.0F;
+            auto full_start = std::chrono::high_resolution_clock::now();
+            dist = active_side_index->estimate_full(static_cast<IdxType>(vec_id), query_ctx, &refined_low);
+            stats.rabitq_full_time_ms += std::chrono::duration<double, std::milli>(
+               std::chrono::high_resolution_clock::now() - full_start
+            ).count();
+            stats.rabitq_full_calls += 1;
+            num_distance_calcs += 1;
+            (void)refined_low;
+         }
+
+         if (top_k_heap.size() < K) {
+            top_k_heap.push({dist, static_cast<IdxType>(vec_id)});
+         } else if (dist < top_k_heap.top().first) {
+            top_k_heap.pop();
+            top_k_heap.push({dist, static_cast<IdxType>(vec_id)});
+         }
+      }
+
+      size_t valid_k = top_k_heap.size();
+      for (int i = static_cast<int>(valid_k) - 1; i >= 0; --i) {
+         results[i].first = top_k_heap.top().second;
          results[i].second = top_k_heap.top().first;
          top_k_heap.pop();
       }
@@ -3177,8 +3823,8 @@ void UniNavGraph::calculate_query_features_only(
       }
 
       // --- 模式 1: SmartRoute ---
-      if (routing_mode == 1) {
-         // Fpass (NumDescendants)
+      if (routing_mode == 1 || routing_mode == 6) {
+         // 1. 新增：计算 Fpass (NumDescendants) 用于模型推理
          auto start_fpass = std::chrono::high_resolution_clock::now();
          size_t num_descendants = 0;
          if (query_labels.empty()) {
@@ -3211,12 +3857,11 @@ void UniNavGraph::calculate_query_features_only(
          }
          stats.fpass_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_fpass).count();
          stats.num_lng_descendants = num_descendants;
-
          // 2. 进行模型预测
          auto pred_start = std::chrono::high_resolution_clock::now();
          int router_decision = 0; 
          if (_smart_route_selector) {
-               // 特征输入顺序严格对齐 Python: Ppass, Descendants, QuerySize, CandSize
+               // 【关键修改】特征输入顺序严格对齐 Python: Ppass, Descendants, QuerySize, CandSize
                std::vector<float> features = {f_ppass, static_cast<float>(num_descendants), f_qsize, f_cand};
                float pred_val = _smart_route_selector->predict(features);
                router_decision = static_cast<int>(std::round(pred_val));
@@ -3437,9 +4082,9 @@ void UniNavGraph::calculate_query_features_only(
       int final_algo_choice = -1;
 
       // -----------------------------------------------------------------------
-      // 路径 A: SmartRoute+ (Mode 5) 
+      // 路径 A: SmartRoute+ / SmartRoute+++ (Mode 5 / 7, global choices are precomputed)
       // -----------------------------------------------------------------------
-      if (routing_mode == 5) {
+      if (routing_mode == 5 || routing_mode == 7) {
             final_algo_choice = query_algo_choices[id]; // 此时传进来的已经是全局算好的 choice
             stats.algo_choice = final_algo_choice;
 
@@ -3492,7 +4137,7 @@ void UniNavGraph::calculate_query_features_only(
                stats.bitmap_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - mask_start).count(); 
                stats.global_p_pass = static_cast<float>(stats.exact_cand_size) / _num_points;
                has_exact_mask = true;
-            } else if (routing_mode == 1 || routing_mode == 2 || routing_mode == 3) {
+            } else if (routing_mode == 1 || routing_mode == 2 || routing_mode == 3 || routing_mode == 6) {
                auto mask_start = std::chrono::high_resolution_clock::now(); 
                if (query_labels.empty()) {
                   roar_res.addRange(0, _num_points);
@@ -3634,6 +4279,34 @@ void UniNavGraph::calculate_query_features_only(
             auto search_time_start_ms = std::chrono::high_resolution_clock::now();
             size_t dist_calcs = 0;
             std::vector<std::pair<IdxType, float>> exact_results(K);
+             ANNS::rabitq::RabitQSideIndex::QueryContext local_query_ctx;
+             ANNS::rabitq::RabitQSideIndex::QueryContext *prefilter_query_ctx = nullptr;
+
+             const bool use_rabitq_prefilter = (_ung_distance_mode == UngDistanceMode::RabitQ && _rabitq_side_index.enabled());
+             if (use_rabitq_prefilter) {
+                if (id >= 0 && static_cast<size_t>(id) < _rabitq_query_ctx_cache.size()) {
+                   prefilter_query_ctx = _rabitq_query_ctx_cache[id].get();
+                   stats.rabitq_ctx_prepare_time_ms = _rabitq_query_ctx_prepare_ms[id];
+                   stats.rabitq_ctx_rotate_time_ms = _rabitq_query_ctx_rotate_ms[id];
+                   stats.rabitq_ctx_q2c_time_ms = _rabitq_query_ctx_q2c_ms[id];
+                   stats.rabitq_ctx_wrapper_time_ms = _rabitq_query_ctx_wrapper_ms[id];
+                   stats.rabitq_ctx_reused = (prefilter_query_ctx != nullptr);
+                }
+                if (prefilter_query_ctx == nullptr) {
+                   auto init_start = std::chrono::high_resolution_clock::now();
+                   ANNS::rabitq::RabitQSideIndex::InitTiming init_timing;
+                   if (_rabitq_side_index.init_query(query, local_query_ctx, &init_timing)) {
+                      prefilter_query_ctx = &local_query_ctx;
+                      stats.rabitq_ctx_prepare_time_ms += std::chrono::duration<double, std::milli>(
+                         std::chrono::high_resolution_clock::now() - init_start
+                      ).count();
+                      stats.rabitq_ctx_rotate_time_ms += init_timing.rotate_ms;
+                      stats.rabitq_ctx_q2c_time_ms += init_timing.q_to_centroids_ms;
+                      stats.rabitq_ctx_wrapper_time_ms += init_timing.wrapper_ms;
+                      stats.rabitq_ctx_reused = false;
+                   }
+                }
+             }
 
          //  if (routing_mode == 2 || routing_mode == 3) {
          //    //   search_baseline_exact_roaring(query, exact_roaring_mask.value(), K, exact_results.data(), dist_calcs);
@@ -3645,13 +4318,21 @@ void UniNavGraph::calculate_query_features_only(
 
          // 优先检查是否生成了 CRoaring 掩码（兜底B 和 模式2/3 都会生成）
             if (final_roaring_ptr != nullptr) {
+                 if (use_rabitq_prefilter && prefilter_query_ctx != nullptr) {
+                    search_baseline_rabitq_roaring(*final_roaring_ptr, K, exact_results.data(), dist_calcs, *prefilter_query_ctx, stats);
+                 } else {
                search_baseline_exact_roaring(query, *final_roaring_ptr, K, exact_results.data(), dist_calcs);
             } 
+             } 
             // 否则回退到普通 Bitset 掩码（例如 Mode 1 生成的）
             else if (exact_mask_ptr != nullptr) {
                bool use_optimized = false; 
+                 if (use_rabitq_prefilter && prefilter_query_ctx != nullptr) {
+                    search_baseline_rabitq(*exact_mask_ptr, K, exact_results.data(), dist_calcs, *prefilter_query_ctx, stats, use_optimized);
+                 } else {
                search_baseline_exact(query, *exact_mask_ptr, K, exact_results.data(), dist_calcs, use_optimized);
             }
+             }
 
             stats.num_distance_calcs = dist_calcs;
             stats.core_search_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - search_time_start_ms).count();
@@ -3769,11 +4450,14 @@ void UniNavGraph::calculate_query_features_only(
       {
          auto search_time_start_ms = std::chrono::high_resolution_clock::now();
          std::shared_ptr<faiss::IndexACORNFlat> selected_acorn_index = nullptr; // <--- 使用一个临时指针
+         const ANNS::rabitq::RabitQSideIndex* selected_acorn_side_index = nullptr;
 
          if (final_algo_choice == 6) {
             selected_acorn_index = _acorn_1_index;
+            selected_acorn_side_index = &_acorn_1_rabitq_side_index;
          } else { 
             selected_acorn_index = _acorn_index;
+            selected_acorn_side_index = &_acorn_rabitq_side_index;
          }
 
          // --- Execute ACORN Search ---
@@ -3820,8 +4504,22 @@ void UniNavGraph::calculate_query_features_only(
          bool has_els_groups = !entry_group_ids.empty();
          bool has_exact_mask = (exact_mask_ptr != nullptr);
          
-         // 只有在既没有 ELS，也没有在特征提取阶段算过 exact_mask 时，才使用慢速的倒排索引
+            // 只有在既没有 ELS，也没有在特征提取阶段算过 exact_mask 时，才使用 ACORN 内部倒排索引
          bool use_acorn_native_filter = (!has_els_groups && !has_exact_mask);
+            bool use_acorn_rabitq =
+                (_ung_distance_mode == UngDistanceMode::RabitQ &&
+                 selected_acorn_side_index != nullptr &&
+                 selected_acorn_side_index->enabled());
+
+            // 保持 ACORN 图搜索流程一致，仅替换距离计算后端
+            faiss::SearchParametersACORN acorn_search_params;
+            acorn_search_params.efSearch = current_efs;
+            std::shared_ptr<ACORNRabitQDistanceBackend> acorn_rabitq_backend = nullptr;
+            if (use_acorn_rabitq)
+            {
+               acorn_rabitq_backend = std::make_shared<ACORNRabitQDistanceBackend>(selected_acorn_side_index);
+               acorn_search_params.distance_backend = acorn_rabitq_backend;
+            }
 
          if (use_acorn_native_filter)
          {
@@ -3833,7 +4531,7 @@ void UniNavGraph::calculate_query_features_only(
             auto core_search_start_time = std::chrono::high_resolution_clock::now();
             selected_acorn_index->search_old_bitmap(
                   1, query_vector_float, K, result_dists.data(), result_original_ids.data(), 
-                  query_attrs_for_acorn, nullptr, nullptr, nullptr, current_baseline_alg);
+                   query_attrs_for_acorn, nullptr, nullptr, nullptr, current_baseline_alg, &acorn_search_params);
             stats.core_search_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - core_search_start_time).count();
          }
          else
@@ -3915,7 +4613,7 @@ void UniNavGraph::calculate_query_features_only(
             auto core_search_start_time = std::chrono::high_resolution_clock::now();
             selected_acorn_index->search(
                   1, query_vector_float, K, result_dists.data(), result_original_ids.data(), 
-                  filter_map.data(), nullptr, nullptr, nullptr, current_baseline_alg);
+                   filter_map.data(), nullptr, nullptr, nullptr, current_baseline_alg, &acorn_search_params);
             stats.core_search_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - core_search_start_time).count();
          }
 
@@ -3928,6 +4626,19 @@ void UniNavGraph::calculate_query_features_only(
             }
          }
          num_cmps[id] = 0;
+            if (use_acorn_rabitq && acorn_rabitq_backend)
+            {
+               const auto rabitq_snapshot = acorn_rabitq_backend->snapshot();
+               stats.rabitq_ctx_prepare_time_ms += rabitq_snapshot.ctx_prepare_time_ms;
+               stats.rabitq_ctx_rotate_time_ms += rabitq_snapshot.ctx_rotate_time_ms;
+               stats.rabitq_ctx_q2c_time_ms += rabitq_snapshot.ctx_q2c_time_ms;
+               stats.rabitq_ctx_wrapper_time_ms += rabitq_snapshot.ctx_wrapper_time_ms;
+               stats.rabitq_bin_time_ms += rabitq_snapshot.bin_time_ms;
+               stats.rabitq_full_time_ms += rabitq_snapshot.full_time_ms;
+               stats.rabitq_bin_calls += rabitq_snapshot.bin_calls;
+               stats.rabitq_full_calls += rabitq_snapshot.full_calls;
+               stats.rabitq_ctx_reused = false;
+            }
          stats.search_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - search_time_start_ms).count();
       }
       else if (final_algo_choice == 0 || final_algo_choice == 1 || final_algo_choice == 8) // UNG 家族
@@ -3948,7 +4659,38 @@ void UniNavGraph::calculate_query_features_only(
          }
 
          auto core_search_start_time = std::chrono::high_resolution_clock::now();
-         num_cmps[id] = iterate_to_fixed_point(query, search_cache, id, entry_points, stats.num_nodes_visited);
+            if (_ung_distance_mode == UngDistanceMode::RabitQ && _rabitq_side_index.enabled())
+            {
+               ANNS::rabitq::RabitQSideIndex::QueryContext *cached_query_ctx = nullptr;
+               if (id >= 0 && static_cast<size_t>(id) < _rabitq_query_ctx_cache.size())
+               {
+                  cached_query_ctx = _rabitq_query_ctx_cache[id].get();
+                  stats.rabitq_ctx_prepare_time_ms = _rabitq_query_ctx_prepare_ms[id];
+                  stats.rabitq_ctx_rotate_time_ms = _rabitq_query_ctx_rotate_ms[id];
+                  stats.rabitq_ctx_q2c_time_ms = _rabitq_query_ctx_q2c_ms[id];
+                  stats.rabitq_ctx_wrapper_time_ms = _rabitq_query_ctx_wrapper_ms[id];
+                  stats.rabitq_ctx_reused = (cached_query_ctx != nullptr);
+               }
+               num_cmps[id] = iterate_to_fixed_point_rabitq(
+                   query,
+                   search_cache,
+                   id,
+                   entry_points,
+                   stats.num_nodes_visited,
+                   stats,
+                   cached_query_ctx
+               );
+            }
+            else
+            {
+               num_cmps[id] = iterate_to_fixed_point(
+                   query,
+                   search_cache,
+                   id,
+                   entry_points,
+                   stats.num_nodes_visited
+               );
+            }
          stats.core_search_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - core_search_start_time).count();
 
          stats.num_distance_calcs = num_cmps[id];
@@ -3972,7 +4714,7 @@ void UniNavGraph::calculate_query_features_only(
       }
 
       double pure_search_time = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - total_search_start_time).count();
-      if (routing_mode == 5) {
+      if (routing_mode == 5 || routing_mode == 7) {
             stats.time_ms = pure_search_time + stats.mask_gen_time_ms + stats.route_pred_time_ms + stats.global_sort_time_ms;
       } else {
             stats.time_ms = pure_search_time;
@@ -4049,9 +4791,9 @@ void UniNavGraph::calculate_query_features_only(
       std::vector<int> final_choices = csv_choices;
       if (final_choices.size() < num_queries) final_choices.resize(num_queries, -1);
 
-      if (routing_mode != 5) return final_choices;
+      if (routing_mode != 5 && routing_mode != 7) return final_choices;
 
-      std::cout << "\n[SmartRoute+] Starting Global Prediction Phase..." << std::endl;
+      std::cout << "\n[SmartRoute" << (routing_mode == 7 ? "+++" : "+") << "] Starting Global Prediction Phase..." << std::endl;
          
       std::vector<int> target_ids;
       std::vector<int> id_to_batch_idx(num_queries, -1); 
@@ -4078,11 +4820,11 @@ void UniNavGraph::calculate_query_features_only(
 
          auto mask_start = std::chrono::high_resolution_clock::now();
          size_t exact_cand_size = 0;
-         size_t num_descendants = 0; // Fpass 初始化
+         size_t num_descendants = 0; // 新增：Fpass 初始化
 
          if (query_labels.empty()) {
                exact_cand_size = _num_points;
-               num_descendants = _num_groups; // 空标签覆盖全组
+               num_descendants = _num_groups; // 新增：空标签覆盖全组
          } else {
                // 1. 计算 exact_cand_size (基于 _vec_attr_roaring_inv)
                bool is_valid = true;
@@ -4172,8 +4914,8 @@ void UniNavGraph::calculate_query_features_only(
       // [阶段 2]：单次调用 Batch 推理
       // -------------------------------------------------------------
       auto pred_start = std::chrono::high_resolution_clock::now();
-      if (_smart_route_selector && !batch_features.empty()) {
-         
+      if (!batch_features.empty()) {
+         if (_smart_route_selector) {
          std::vector<float> batch_preds = _smart_route_selector->predict_batch(batch_features);
          
          // 顺序与 target_ids 对应，直接回写
@@ -4185,6 +4927,31 @@ void UniNavGraph::calculate_query_features_only(
                else if (router_decision == 1) final_choices[id] = _majority_acorn_id;
                else final_choices[id] = 8;
          }
+         } else if (_fast_route_single_selector) {
+            // SmartRoute 模型缺失时，回退到 FastSmartRoute 单模型，避免 algo choice 保持 -1。
+            std::vector<float> batch_preds = _fast_route_single_selector->predict_batch(batch_features);
+            for (size_t i = 0; i < target_ids.size(); ++i) {
+                  int id = target_ids[i];
+                  int router_decision = std::round(batch_preds[i]);
+
+                  if (router_decision == 2) final_choices[id] = 5;
+                  else if (router_decision == 1) final_choices[id] = _single_majority_acorn_id;
+                  else final_choices[id] = 8;
+            }
+            std::cout << "[SmartRoute+] SmartRoute model is unavailable, fallback to FastSmartRoute selector." << std::endl;
+         } else {
+            for (int id : target_ids) {
+               final_choices[id] = 8;
+            }
+            std::cout << "[SmartRoute+] No routing selector is available, fallback all unresolved queries to UNG+ (choice=8)." << std::endl;
+         }
+      }
+
+      // 保底：不允许未决策查询残留为 -1（否则后续执行阶段不会进入任何算法分支）。
+      for (int id : target_ids) {
+         if (final_choices[id] == -1) {
+            final_choices[id] = 8;
+         }
       }
       double total_pred_time = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - pred_start).count();
          
@@ -4194,7 +4961,7 @@ void UniNavGraph::calculate_query_features_only(
          out_global_stats[id].route_pred_time_ms = avg_pred_time;
       }
 
-      std::cout << "[SmartRoute+] Global Phase completed." << std::endl;
+      std::cout << "[SmartRoute" << (routing_mode == 7 ? "+++" : "+") << "] Global Phase completed." << std::endl;
       return final_choices;
    }
    
@@ -4208,7 +4975,7 @@ void UniNavGraph::calculate_query_features_only(
       std::vector<int> sorted_ids(num_queries);
       std::iota(sorted_ids.begin(), sorted_ids.end(), 0);
 
-      if (routing_mode != 5) return sorted_ids;
+      if (routing_mode != 5 && routing_mode != 7) return sorted_ids;
       
       std::vector<size_t> query_hashes(num_queries);
       #pragma omp parallel for
@@ -4341,6 +5108,123 @@ void UniNavGraph::calculate_query_features_only(
       return num_cmps;
    }
 
+   IdxType UniNavGraph::iterate_to_fixed_point_rabitq(const char *query, std::shared_ptr<SearchCache> search_cache,
+                                                      IdxType target_id, const std::vector<IdxType> &entry_points,
+                                                      size_t &num_nodes_visited,
+                                                      QueryStats &stats,
+                                                      ANNS::rabitq::RabitQSideIndex::QueryContext *cached_query_ctx,
+                                                      bool clear_search_queue, bool clear_visited_set)
+   {
+      (void)target_id;
+      auto &search_queue = search_cache->search_queue;
+      auto &visited_set = search_cache->visited_set;
+      std::vector<IdxType> neighbors;
+
+      if (clear_search_queue)
+         search_queue.clear();
+      if (clear_visited_set)
+         visited_set.clear();
+
+      ANNS::rabitq::RabitQSideIndex::QueryContext local_query_ctx;
+      ANNS::rabitq::RabitQSideIndex::QueryContext *query_ctx = cached_query_ctx;
+      if (query_ctx == nullptr)
+      {
+         auto init_start = std::chrono::high_resolution_clock::now();
+         ANNS::rabitq::RabitQSideIndex::InitTiming init_timing;
+         if (!_rabitq_side_index.init_query(query, local_query_ctx, &init_timing))
+         {
+            return iterate_to_fixed_point(
+                query,
+                search_cache,
+                target_id,
+                entry_points,
+                num_nodes_visited,
+                false,
+                false
+            );
+         }
+         stats.rabitq_ctx_prepare_time_ms += std::chrono::duration<double, std::milli>(
+             std::chrono::high_resolution_clock::now() - init_start
+         ).count();
+         stats.rabitq_ctx_rotate_time_ms += init_timing.rotate_ms;
+         stats.rabitq_ctx_q2c_time_ms += init_timing.q_to_centroids_ms;
+         stats.rabitq_ctx_wrapper_time_ms += init_timing.wrapper_ms;
+         stats.rabitq_ctx_reused = false;
+         query_ctx = &local_query_ctx;
+      }
+
+      for (const auto &entry_point : entry_points)
+      {
+         if (visited_set.check(entry_point))
+         {
+            continue;
+         }
+         visited_set.set(entry_point);
+         float low_dist = 0.0F;
+         auto bin_start = std::chrono::high_resolution_clock::now();
+         float est_dist = _rabitq_side_index.estimate_bin(entry_point, *query_ctx, &low_dist);
+         stats.rabitq_bin_time_ms += std::chrono::duration<double, std::milli>(
+             std::chrono::high_resolution_clock::now() - bin_start
+         ).count();
+         stats.rabitq_bin_calls += 1;
+         (void)low_dist;
+         search_queue.insert(entry_point, est_dist);
+      }
+      IdxType num_cmps = static_cast<IdxType>(search_queue.size());
+
+      while (search_queue.has_unexpanded_node())
+      {
+         const Candidate &cur = search_queue.get_closest_unexpanded();
+         neighbors = _graph->neighbors[cur.id];
+
+         for (size_t i = 0; i < neighbors.size(); ++i)
+         {
+            if (i + 1 < neighbors.size() && visited_set.check(neighbors[i + 1]) == false)
+            {
+               _base_storage->prefetch_vec_by_id(neighbors[i + 1]);
+            }
+
+            auto &neighbor = neighbors[i];
+            if (visited_set.check(neighbor))
+               continue;
+            visited_set.set(neighbor);
+            num_nodes_visited++;
+
+            float low_dist = 0.0F;
+            auto bin_start = std::chrono::high_resolution_clock::now();
+            float est_dist = _rabitq_side_index.estimate_bin(neighbor, *query_ctx, &low_dist);
+            stats.rabitq_bin_time_ms += std::chrono::duration<double, std::milli>(
+                std::chrono::high_resolution_clock::now() - bin_start
+            ).count();
+            stats.rabitq_bin_calls += 1;
+            num_cmps++;
+
+            bool should_refine = false;
+            if (search_queue.size() >= search_queue.capacity() && search_queue.size() > 0)
+            {
+               should_refine = low_dist < search_queue[search_queue.size() - 1].distance;
+            }
+
+            float dist_to_insert = est_dist;
+            if (should_refine)
+            {
+               float refined_low = 0.0F;
+               auto full_start = std::chrono::high_resolution_clock::now();
+               float refined_dist = _rabitq_side_index.estimate_full(neighbor, *query_ctx, &refined_low);
+               stats.rabitq_full_time_ms += std::chrono::duration<double, std::milli>(
+                   std::chrono::high_resolution_clock::now() - full_start
+               ).count();
+               stats.rabitq_full_calls += 1;
+               (void)refined_low;
+               dist_to_insert = refined_dist;
+               num_cmps++;
+            }
+            search_queue.insert(neighbor, dist_to_insert);
+         }
+      }
+      return num_cmps;
+   }
+
    // fxy_add
    IdxType UniNavGraph::iterate_to_fixed_point_global(const char *query, std::shared_ptr<SearchCache> search_cache,
                                                       IdxType target_id, const std::vector<IdxType> &entry_points,
@@ -4426,6 +5310,15 @@ void UniNavGraph::calculate_query_features_only(
       meta_data["cross_edge_step2_acorn_time(ms)"] = std::to_string(_cross_edge_step2_acorn_time_ms);
       meta_data["cross_edge_step3_add_dist_edges_time(ms)"] = std::to_string(_cross_edge_step3_add_dist_edges_time_ms);
       meta_data["cross_edge_step4_add_hierarchy_edges_time(ms)"] = std::to_string(_cross_edge_step4_add_hierarchy_edges_time_ms);
+      meta_data["rabitq_build_requested"] = _build_rabitq_side_index ? "1" : "0";
+      meta_data["rabitq_enabled"] = _rabitq_side_index.enabled() ? "1" : "0";
+      meta_data["rabitq_total_bits"] = std::to_string(_rabitq_side_index.total_bits());
+      meta_data["rabitq_build_time(ms)"] = std::to_string(_rabitq_build_time_ms);
+      meta_data["rabitq_side_size_bytes"] = "0";
+      meta_data["index_time_without_rabitq(ms)"] = std::to_string(std::max(0.0, static_cast<double>(_index_time) - _rabitq_build_time_ms));
+      meta_data["index_time_with_rabitq(ms)"] = std::to_string(_index_time);
+      meta_data["index_size_without_rabitq(MB)"] = std::to_string(_index_size_add_rb);
+      meta_data["index_size_with_rabitq(MB)"] = std::to_string(_index_size_add_rb);
 
       // FXY_ADD: 计算并保存 Trie 静态指标
       std::cout << "Calculating and saving Trie static metrics..." << std::endl;
@@ -4463,6 +5356,7 @@ void UniNavGraph::calculate_query_features_only(
       build_time_file << "cross_edge_step2_acorn_time" << "," << _cross_edge_step2_acorn_time_ms << "\n";
       build_time_file << "cross_edge_step3_add_dist_edges_time" << "," << _cross_edge_step3_add_dist_edges_time_ms << "\n";
       build_time_file << "cross_edge_step4_add_hierarchy_edges_time" << "," << _cross_edge_step4_add_hierarchy_edges_time_ms << "\n";
+      build_time_file << "rabitq_build_time" << "," << _rabitq_build_time_ms << "\n";
       build_time_file.close();
 
       // save vectors and label sets
@@ -4543,6 +5437,24 @@ void UniNavGraph::calculate_query_features_only(
       std::string covered_sets_rb_filename = index_path_prefix + "covered_sets_rb.bin";
       save_roaring_vector(covered_sets_rb_filename, _covered_sets_rb);
 
+      if (_rabitq_side_index.enabled())
+      {
+         const std::string rabitq_side_filename = index_path_prefix + "rabitq_side.bin";
+         if (!_rabitq_side_index.save(rabitq_side_filename))
+         {
+            std::cerr << "[RabitQ] Failed to save side index to " << rabitq_side_filename << std::endl;
+         }
+         else
+         {
+            // Use an in-memory estimate (sizeof-based) instead of on-disk file size.
+            _rabitq_side_size_bytes = _rabitq_side_index.estimated_memory_bytes(false);
+         }
+      }
+      else
+      {
+         _rabitq_side_size_bytes = 0;
+      }
+
       // save acorn index
       std::cout << "\n--- Exporting reordered data for ACORN index building ---" << std::endl;
 
@@ -4600,6 +5512,19 @@ void UniNavGraph::calculate_query_features_only(
       std::cout << "--- Finished exporting reordered data ---\n"
                 << std::endl;
       // ========================== 修改部分结束 ==========================
+
+      const double rabitq_side_size_mb = static_cast<double>(_rabitq_side_size_bytes) / (1024.0 * 1024.0);
+      meta_data["rabitq_side_size_bytes"] = std::to_string(_rabitq_side_size_bytes);
+      meta_data["index_size_with_rabitq(MB)"] = std::to_string(_index_size_add_rb + rabitq_side_size_mb);
+      write_kv_file(meta_filename, meta_data);
+
+      std::ofstream build_time_append_file(build_time_filename, std::ios::app);
+      build_time_append_file << "index_time_without_rabitq" << "," << std::max(0.0, static_cast<double>(_index_time) - _rabitq_build_time_ms) << "\n";
+      build_time_append_file << "index_time_with_rabitq" << "," << _index_time << "\n";
+      build_time_append_file << "rabitq_side_size_bytes" << "," << _rabitq_side_size_bytes << "\n";
+      build_time_append_file << "index_size_without_rabitq_MB" << "," << _index_size_add_rb << "\n";
+      build_time_append_file << "index_size_with_rabitq_MB" << "," << (_index_size_add_rb + rabitq_side_size_mb) << "\n";
+      build_time_append_file.close();
 
       // print
       std::cout << "- Index saved in " << std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count() << " ms" << std::endl;
@@ -4757,6 +5682,27 @@ void UniNavGraph::calculate_query_features_only(
       std::cout << " _label_nav_graph->out_neighbors.size() = " << _label_nav_graph->out_neighbors.size() << std::endl;
       std::cout << " _num_groups = " << _num_groups << std::endl;
 
+      _build_rabitq_side_index = false;
+      _rabitq_total_bits = 4;
+      auto rabitq_bits_it = meta_data.find("rabitq_total_bits");
+      if (rabitq_bits_it != meta_data.end())
+      {
+         _rabitq_total_bits = static_cast<size_t>(std::stoul(rabitq_bits_it->second));
+      }
+      auto rabitq_enabled_it = meta_data.find("rabitq_enabled");
+      if (rabitq_enabled_it != meta_data.end() && rabitq_enabled_it->second == "1")
+      {
+         const std::string rabitq_side_filename = index_path_prefix + "rabitq_side.bin";
+         if (_rabitq_side_index.load(rabitq_side_filename))
+         {
+            std::cout << "[RabitQ] Side index loaded from " << rabitq_side_filename << std::endl;
+         }
+         else
+         {
+            std::cerr << "[RabitQ] Failed to load side index. Exact mode remains available." << std::endl;
+         }
+      }
+
       // load idea1 selector
       std::string model_path = selector_modle_prefix + "/intelElS/idea1_selector_model_final.onnx";
       std::cout << "Loading Trie method selector model from " << model_path << " ..." << std::endl;
@@ -4864,6 +5810,24 @@ void UniNavGraph::calculate_query_features_only(
                _acorn_index->set_metadata(metadata);
                std::cout << "- ACORN index loaded and metadata associated successfully." << std::endl;
 
+               std::string acorn_rabitq_side_path = acorn_index_path + ".rabitq_side.bin";
+               if (fs::exists(acorn_rabitq_side_path))
+               {
+                  if (_acorn_rabitq_side_index.load(acorn_rabitq_side_path))
+                  {
+                     std::cout << "- ACORN RabitQ side index loaded from: " << acorn_rabitq_side_path << std::endl;
+                  }
+                  else
+                  {
+                     std::cerr << "  - [WARNING] Failed to load ACORN RabitQ side index from: "
+                               << acorn_rabitq_side_path << std::endl;
+                  }
+               }
+               else
+               {
+                  std::cout << "- ACORN RabitQ side index not found: " << acorn_rabitq_side_path << std::endl;
+               }
+
                std::string inverted_index_path = acorn_index_path + ".inverted_index";
                if (fs::exists(inverted_index_path))
                {
@@ -4917,6 +5881,24 @@ void UniNavGraph::calculate_query_features_only(
                }
                _acorn_1_index->set_metadata(metadata);
                std::cout << "- ACORN-1 index loaded and metadata associated successfully." << std::endl;
+
+               std::string acorn_1_rabitq_side_path = acorn_1_index_path + ".rabitq_side.bin";
+               if (fs::exists(acorn_1_rabitq_side_path))
+               {
+                  if (_acorn_1_rabitq_side_index.load(acorn_1_rabitq_side_path))
+                  {
+                     std::cout << "- ACORN-1 RabitQ side index loaded from: " << acorn_1_rabitq_side_path << std::endl;
+                  }
+                  else
+                  {
+                     std::cerr << "  - [WARNING] Failed to load ACORN-1 RabitQ side index from: "
+                               << acorn_1_rabitq_side_path << std::endl;
+                  }
+               }
+               else
+               {
+                  std::cout << "- ACORN-1 RabitQ side index not found: " << acorn_1_rabitq_side_path << std::endl;
+               }
 
                // Replace the old loading logic to reuse the inverted index.
                if (inverted_index_loaded)

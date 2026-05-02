@@ -7,12 +7,12 @@ echo "=== 启动批量实验任务流程 ==="
 echo "所有执行记录将保存至：$(pwd)/$LOG_DIR"
 
 DATASETS=(
-    "Amazon"
-    "BookReviews"
-    "Genome"
-    "Reviews"
-    "VariousImg"
-    "Music"
+    # "Amazon"
+    # "BookReviews"
+    # "Genome"
+    # "Reviews"
+    # "VariousImg"
+    # "Music"
     "Tiktok"
     "Laion"
 )
@@ -21,7 +21,7 @@ PERF_EVENTS="cache-references,cache-misses,L1-dcache-loads,L1-dcache-load-misses
 
 for i in "${!DATASETS[@]}"; do
     DS_NAME=${DATASETS[$i]}
-    JSON_FILE="experiment_json/202604-200-random-300-mix-len/experiments-${DS_NAME}-200-random-300-mix-len.json"
+    JSON_FILE="experiment_json/202604-200-random-300-mix-len-SR++/experiments-${DS_NAME}-200-random-300-mix-len.json"
     OUTPUT_LOG="$LOG_DIR/${DS_NAME}_output.log"
     PERF_SUMMARY_LOG="$LOG_DIR/${DS_NAME}_perf_summary.log"
 

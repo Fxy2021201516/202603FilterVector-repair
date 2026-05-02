@@ -267,6 +267,8 @@ namespace ANNS
       metrics.bfs_nodes_processed = bfs_nodes_processed;
 #endif
 
+      metrics.bfs_nodes_processed = bfs_nodes_processed;
+
 #if ENABLE_TRIE_DEBUG_OUTPUT
       /*// --- 4. 使用原子计数器控制打印次数 ---
       if (print_counter.fetch_add(1, std::memory_order_relaxed) < 10) // 2. 使用原子计数器

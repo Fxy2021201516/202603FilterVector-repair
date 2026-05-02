@@ -81,7 +81,9 @@ def generate_qps_recall_grid(all_plot_items, main_title, output_filename, font_s
         "pre-filtering": "gold",  
         "NaviX": "tab:pink",          
         "SmartRoute": "tab:green",
-        "SmartRoute+": "tab:red"
+        "SmartRoute+": "tab:red",
+        "SmartRoute++": "tab:cyan",
+        "SmartRoute+++": "tab:brown"    
         # "ImprovedUNG": "tab:cyan",
     }
 
@@ -96,12 +98,12 @@ def generate_qps_recall_grid(all_plot_items, main_title, output_filename, font_s
 
     # 2. 定义图例顺序 (Legend Order)
     # 这决定了图例中标签的排列顺序
-    default_legend_order = ["ACORN-1", "ACORN-γ","NaviX","pre-filtering", "UNG","UNG+", "SmartRoute", "SmartRoute+"]
+    default_legend_order = ["ACORN-1", "ACORN-γ","NaviX","pre-filtering", "UNG","UNG+", "SmartRoute", "SmartRoute+","SmartRoute++","SmartRoute+++"]
     alg_order = plot_settings.get('custom_alg_order', default_legend_order)
 
     # 3. 定义绘图层级顺序 (Drawing Order / Z-Order)
     # 列表越靠前的算法，越先被绘制 (即位于图层最底部/Under)
-    default_drawing_order = ["UNG", "ACORN-γ", "ACORN-1","ACORN-γ-improved", "NaviX","UNG+","pre-filtering", "SmartRoute", "SmartRoute+"]
+    default_drawing_order = ["UNG", "ACORN-γ", "ACORN-1","ACORN-γ-improved", "NaviX","UNG+","pre-filtering", "SmartRoute", "SmartRoute+""SmartRoute+","SmartRoute++","SmartRoute+++"]
     drawing_order = plot_settings.get('custom_z_order', default_drawing_order)
 
     def get_marker_for_alg(name):

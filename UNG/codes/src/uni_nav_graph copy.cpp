@@ -3177,7 +3177,7 @@ void UniNavGraph::calculate_query_features_only(
       }
 
       // --- 模式 1: SmartRoute ---
-      if (routing_mode == 1) {
+      if (routing_mode == 1 || routing_mode == 6) {
          // 1. 立即进行模型预测
          auto pred_start = std::chrono::high_resolution_clock::now();
          int router_decision = 0; 

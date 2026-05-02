@@ -61,7 +61,9 @@ def fetch_data_for_subplot(config, dataset_name, base_params, algorithms, cache,
       "pre-filtering": "pre-filter",  
       "NaviX": "NaviX-ACORN",    
       "SmartRoute": "SmartRoute",
-      "SmartRoute+": "SmartRoute+"                  
+      "SmartRoute+": "SmartRoute+",
+      "SmartRoute++": "SmartRoute++",
+      "SmartRoute+++": "SmartRoute+++"                    
    }
    
    if num_queries == 0:
@@ -140,7 +142,7 @@ def handle_qps_recall_tasks(config, font_sizes):
    special_task_keys = ['k_comparison_plots', 'length_comparison_plots', 'selectivity_comparison_plots', 
                         'p_pass_comparison_plots', 'thread_comparison_plots',
                         'curated_k_plots', 'curated_p_pass_plots', 'curated_thread_plots', 'curated_one_query_plots','curated_mixed_plots',
-                        'speedup_ratio_tasks']
+                        'speedup_ratio_tasks', 'smartroute_variants_plots']
    
    tasks_by_dataset = {k: v for k, v in tasks.items() if k not in special_task_keys}
 
@@ -362,6 +364,42 @@ def handle_qps_recall_tasks(config, font_sizes):
                else:
                   title = f"{dataset_name}\n(Untitled)"
 
+               xlabel = f"Recall@{common_params.get('K', 'N/A')}"
+
+               if combined_plot_data:
+                  all_plot_items_for_grid.append({'data': combined_plot_data, 'title': title, 'xlabel': xlabel})
+               else:
+                  all_plot_items_for_grid.append({'data': {}, 'title': f"{title}\n(No Data)", 'xlabel': xlabel})
+
+         if all_plot_items_for_grid:
+               print(f"  -> 准备为 '{task.get('output_filename')}' 绘制 {len(all_plot_items_for_grid)} 个图表，起始编号: 1")
+               plotter.generate_qps_recall_grid(
+                  all_plot_items_for_grid, 
+                  task.get('main_title'), 
+                  task.get('output_filename'), 
+                  font_sizes, 
+                  plot_settings,
+                  numbering_offset_start=1
+               )
+   
+   # --- 4.7 SmartRoute Variants 联合对比图 ('smartroute_variants.png') ---
+   sr_variants_tasks = tasks.get('smartroute_variants_plots', [])
+   if sr_variants_tasks:
+      print("#"*80 + f"\n📈 4.7 开始生成 SmartRoute 四种算法对比图 (编号 1...)...\n" + "#"*80)
+      for task in sr_variants_tasks:
+         if not task.get("enabled", False): continue
+         all_plot_items_for_grid = []
+         plot_settings = task.get('plot_settings', {})
+
+         for dataset_info in task.get('datasets_to_compare', []):
+               dataset_name = dataset_info['dataset_name']
+               common_params = dataset_info.get('common_parameters', {})
+               algorithms = dataset_info.get('algorithms_to_compare', [])
+
+               # 获取数据
+               combined_plot_data = fetch_data_for_subplot(config, dataset_name, common_params, algorithms, query_count_cache)
+
+               title = dataset_info.get('subplot_title', f"{dataset_name}\n(Untitled)")
                xlabel = f"Recall@{common_params.get('K', 'N/A')}"
 
                if combined_plot_data:
