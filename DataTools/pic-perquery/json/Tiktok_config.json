@@ -71,7 +71,7 @@
                   },
                   "b_ppass_filters": {
                      "Tiktok": [23, null] 
-                 },
+                  },
                   "global_recall_filter": {
                      "enabled": false,
                      "min_recall": 0.8

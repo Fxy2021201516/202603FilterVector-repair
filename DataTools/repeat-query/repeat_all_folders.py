@@ -101,11 +101,11 @@ def process_folder_repeat(input_dir, output_dir, dataset, repeat_times):
 
 if __name__ == "__main__":
     # ===================== 用户配置区 =====================
-    DATASET = "VariousImg"
+    DATASET = "Genome"
     REPEAT_TIMES = 300
     
     # 填写上一步 select_vector_and_labels_new.py 生成的【大文件夹】路径
-    INPUT_BASE_DIR = "/home/fengxiaoyao/FilterVector/FilterVectorData/VariousImg/query_select_200_A_B_C-weighted-sub-base-123456789"
+    INPUT_BASE_DIR = "/home/fengxiaoyao/FilterVector/FilterVectorData/Genome/query_select_200_A_B_C-weighted-sub-base-123456789"
     
     # 填写希望输出的【新大文件夹】路径
     OUTPUT_BASE_DIR = f"{INPUT_BASE_DIR}_random_{REPEAT_TIMES}"

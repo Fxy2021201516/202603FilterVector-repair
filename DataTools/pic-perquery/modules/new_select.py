@@ -7,7 +7,8 @@ import sys
 # --- 辅助函数：定义算法和指标的简称 ---
 # ==============================================================================
 
-METRIC_MAP_SELECT = {'SearchTime_ms': 'ST'}
+# METRIC_MAP_SELECT = {'SearchTime_ms': 'ST'}
+METRIC_MAP_SELECT = {'Time_ms': 'T'}
 ALGO_MAP_SELECT = {
     'SmartRoute': 'SR',
     'pre-filter': 'PR', 'NaviX-ACORN': 'NX',
@@ -134,7 +135,8 @@ def run_selection(merged_summary_path, output_path, params, attribute_coverage_p
             return
 
         try:
-            metric_short = METRIC_MAP_SELECT['SearchTime_ms']
+            # metric_short = METRIC_MAP_SELECT['SearchTime_ms']
+            metric_short = METRIC_MAP_SELECT['Time_ms']
             target_col = f"{metric_short}_{ALGO_MAP_SELECT[target_alg]}"
             
             if target_col not in df_full.columns:

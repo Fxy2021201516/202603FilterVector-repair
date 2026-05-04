@@ -401,17 +401,17 @@ int main(int argc, char **argv)
     std::cout << "[UNG+] Mode Enabled: ELS filtering will be skipped." << std::endl;
 }
 
-   if (routing_mode == 0){
-   // calculate query features and save to CSV
-   std::string features_csv_path = result_path_prefix + "query_features.csv";
-   index.calculate_query_features_only(
-      query_storage,
-      num_threads,       
-      features_csv_path, 
-      true,              // is_new_trie_method
-      true               // is_rec_more_start
-   );
-   }
+   // if (routing_mode == 0){
+   // // calculate query features and save to CSV
+   // std::string features_csv_path = result_path_prefix + "query_features.csv";
+   // index.calculate_query_features_only(
+   //    query_storage,
+   //    num_threads,       
+   //    features_csv_path, 
+   //    true,              // is_new_trie_method
+   //    true               // is_rec_more_start
+   // );
+   // }
    // init query stats
    std::vector<std::vector<std::vector<ANNS::QueryStats>>> query_stats(num_repeats, std::vector<std::vector<ANNS::QueryStats>>(Lsearch_list.size(), std::vector<ANNS::QueryStats>(num_queries))); //(repeat,Lsearch,queryID)
 
