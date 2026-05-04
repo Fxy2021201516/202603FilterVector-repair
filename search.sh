@@ -144,7 +144,8 @@ perf stat -e $PERF_EVENTS -o "$PERF_LOG_PATH" \
     --efs_step_slow "$EFS_STEP_SLOW" --efs_step_fast "$EFS_STEP_FAST" --lsearch_threshold "$LSEARCH_THRESHOLD" \
     --ung_distance_mode "$UNG_DISTANCE_MODE" \
     --navix_index_path "$NAVIX_INDEX_PATH" \
-    --algo_choice_csv "$QUERY_DIR/algo_choice_repeat.csv" > "$RESULT_OUTPUT_DIR/others/${DATASET}_search_output.txt" 2>&1
+    --algo_choice_csv "$QUERY_DIR/algo_choice_repeat.csv" \
+    --optimize_standalone_prefilter "${OPTIMIZE_STANDALONE_PREFILTER:-false}" > "$RESULT_OUTPUT_DIR/others/${DATASET}_search_output.txt" 2>&1
 
 # --- Step 7: 后处理，计算各指标全局平均值 ---
 echo "正在计算所有 Query 指标的全局平均值..."

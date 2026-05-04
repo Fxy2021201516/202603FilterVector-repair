@@ -117,6 +117,7 @@ int main(int argc, char **argv)
    int efs_start, efs_step_slow, efs_step_fast, lsearch_threshold;
    std::string dataset; 
    std::string ung_distance_mode = "exact";
+   bool optimize_standalone_prefilter = false; // 默认pre-filter不优化，跑大查询的时候可以打开
 
    try
    {
@@ -187,6 +188,9 @@ int main(int argc, char **argv)
 
       // NaviX
       desc.add_options()("navix_index_path", po::value<std::string>(&navix_index_path)->default_value(""), "Path to NaviX index");
+
+      desc.add_options()("optimize_standalone_prefilter", po::value<bool>(&optimize_standalone_prefilter)->default_value(false),
+                   "Whether to fully optimize pre-filter when running as standalone baseline");
 
 
 
@@ -474,7 +478,7 @@ int main(int argc, char **argv)
          else
          {
              index.search_hybrid(query_storage, distance_handler, num_threads, current_Lsearch,
-                                num_entry_points, scenario, K, results, num_cmps, query_stats[repeat][LsearchId],is_new_trie_method, is_rec_more_start, is_ung_more_entry, lsearch_start, lsearch_step, efs_start, efs_step_slow,efs_step_fast,lsearch_threshold,routing_mode, baseline_alg ,navix_index, true_query_group_ids, final_global_choices, task_queue);
+                                num_entry_points, scenario, K, results, num_cmps, query_stats[repeat][LsearchId],is_new_trie_method, is_rec_more_start, is_ung_more_entry, lsearch_start, lsearch_step, efs_start, efs_step_slow,efs_step_fast,lsearch_threshold,routing_mode, baseline_alg ,navix_index, true_query_group_ids, final_global_choices, task_queue, optimize_standalone_prefilter);
          }
          double pure_search_time = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - start_time).count();
          

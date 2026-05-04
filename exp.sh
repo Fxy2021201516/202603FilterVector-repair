@@ -56,6 +56,7 @@ cat "$CONFIG_FILE" | jq -c '.experiments[]' | while read -r dataset_config; do
     BUILD_RABITQ_SIDE_INDEX=$(echo "$SHARED_CONFIG" | jq -r '.build_rabitq_side_index // false')
     RABITQ_TOTAL_BITS=$(echo "$SHARED_CONFIG" | jq -r '.rabitq_total_bits // 4')
     UNG_DISTANCE_MODE_DEFAULT=$(echo "$SHARED_CONFIG" | jq -r '.ung_distance_mode // "exact"')
+    OPTIMIZE_STANDALONE_PREFILTER=$(echo "$SHARED_CONFIG" | jq -r '.optimize_standalone_prefilter // false')
 
     #项目根路径
     PROJECT_ROOT="/home/fengxiaoyao/FilterVector"
@@ -186,7 +187,8 @@ cat "$CONFIG_FILE" | jq -c '.experiments[]' | while read -r dataset_config; do
                --baseline_alg "$BASELINE_ALG" \
                --ung_distance_mode "$UNG_DISTANCE_MODE" \
                --efs_start "$ACORN_EFS_START" \
-               --efs_step_slow "$ACORN_EFS_STEP_SLOW" --efs_step_fast "$ACORN_EFS_STEP_FAST" --lsearch_threshold "$LSEARCH_THRESHOLD" 
+               --efs_step_slow "$ACORN_EFS_STEP_SLOW" --efs_step_fast "$ACORN_EFS_STEP_FAST" --lsearch_threshold "$LSEARCH_THRESHOLD" \
+               --optimize_standalone_prefilter "$OPTIMIZE_STANDALONE_PREFILTER"
                     
             echo "--- Finished: Dataset=[$DATASET], Query=[$QUERY_DIR_NAME], Algorithm=[$ALGORITHM_NAME] ---"
         done

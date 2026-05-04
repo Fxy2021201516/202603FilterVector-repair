@@ -1646,13 +1646,10 @@ namespace ANNS
 
    // fxy_add
    const std::bitset<16000000>& UniNavGraph::get_exact_cand_size_and_mask(
-    const std::vector<LabelType>& query_labels,
-    size_t& cand_size) const
+      const std::vector<LabelType>& query_labels,
+      size_t& cand_size,
+      bool use_optimized) const
    {
-      // // 复用内存
-      // static thread_local std::bitset<16000000> final_bitmap;
-      // static thread_local std::bitset<16000000> temp_bitmap;
-
       // 复用内存，使用智能指针转移到堆上，防止 thread_local 撑爆线程栈
       static thread_local std::unique_ptr<std::bitset<16000000>> final_bitmap_ptr;
       static thread_local std::unique_ptr<std::bitset<16000000>> temp_bitmap_ptr;
@@ -1668,15 +1665,13 @@ namespace ANNS
          return final_bitmap;
       }
 
-      // 1. 收集所有属性对应的向量列表，并提前拦截无效查询
       std::vector<const std::vector<IdxType>*> valid_vec_lists;
-      // 提前分配空间，避免 vector 扩容开销
       valid_vec_lists.reserve(query_labels.size()); 
       
       for (LabelType attr_label : query_labels) {
          auto it = _attr_to_id.find(attr_label);
          if (it == _attr_to_id.end()) {
-               final_bitmap.reset(); // 遇到未知标签，交集必然为空
+               final_bitmap.reset(); 
                cand_size = 0;
                return final_bitmap;
          }
@@ -1685,33 +1680,40 @@ namespace ANNS
          valid_vec_lists.push_back(&_vector_attr_graph[attr_node_id]);
       }
 
-      // 2. 核心优化：按照候选集大小从小到大排序 (指针拷贝，耗时可忽略不计)
-      std::sort(valid_vec_lists.begin(), valid_vec_lists.end(), 
-         [](const std::vector<IdxType>* a, const std::vector<IdxType>* b) {
-               return a->size() < b->size();
-         });
+      if (use_optimized) {
+         // ==========================================
+         // 开启大优化：SmartRoute 系列或强制开启时走这里
+         // ==========================================
+         std::sort(valid_vec_lists.begin(), valid_vec_lists.end(), 
+               [](const std::vector<IdxType>* a, const std::vector<IdxType>* b) {
+                  return a->size() < b->size();
+               });
 
-      // 3. 核心优化：用最小的集合来初始化 final_bitmap (彻底消灭了原来的 final_bitmap.set() 慢操作)
-      final_bitmap.reset(); 
-      const auto& first_list = *valid_vec_lists[0];
-      for (IdxType vec_id : first_list) {
-         final_bitmap.set(vec_id);
-      }
+         final_bitmap.reset(); 
+         const auto& first_list = *valid_vec_lists[0];
+         for (IdxType vec_id : first_list) final_bitmap.set(vec_id);
 
-      // 4. 依次与其余属性的集合求交集
-      for (size_t i = 1; i < valid_vec_lists.size(); ++i) {
-         // 核心优化：提前终止。如果当前交集已经为空，直接跳出，省去后续所有计算
-         if (final_bitmap.none()) {
-               cand_size = 0;
-               return final_bitmap;
+         for (size_t i = 1; i < valid_vec_lists.size(); ++i) {
+               if (final_bitmap.none()) {
+                  cand_size = 0;
+                  return final_bitmap;
+               }
+               const auto& vec_list = *valid_vec_lists[i];
+               for (IdxType vec_id : vec_list) temp_bitmap.set(vec_id);
+               final_bitmap &= temp_bitmap;
+               for (IdxType vec_id : vec_list) temp_bitmap.reset(vec_id);
          }
-
-         const auto& vec_list = *valid_vec_lists[i];
-         
-         // 【兜底优化】恢复旧代码的精确复位机制，确保小集合场景下纳秒级清零
-         for (IdxType vec_id : vec_list) temp_bitmap.set(vec_id);
-         final_bitmap &= temp_bitmap;
-         for (IdxType vec_id : vec_list) temp_bitmap.reset(vec_id);
+      } else {
+         // ==========================================
+         // 朴素 Baseline：仅测试算法基础能力
+         // ==========================================
+         final_bitmap.set(); // 慢操作：全集置1
+         for (size_t i = 0; i < valid_vec_lists.size(); ++i) {
+               const auto& vec_list = *valid_vec_lists[i];
+               temp_bitmap.reset(); // 慢操作：全体清零
+               for (IdxType vec_id : vec_list) temp_bitmap.set(vec_id);
+               final_bitmap &= temp_bitmap;
+         }
       }
       
       cand_size = final_bitmap.count();
@@ -4058,7 +4060,8 @@ void UniNavGraph::calculate_query_features_only(
                                     int lsearch_start, int lsearch_step,
                                     int efs_start, int efs_step_slow,int efs_step_fast,int lsearch_threshold,
                                     int routing_mode, int baseline_alg, IdxType num_queries, faiss_navix::IndexHNSWFlat* navix_index,
-                                    const std::vector<IdxType> &true_query_group_ids,const std::vector<int> &query_algo_choices)
+                                    const std::vector<IdxType> &true_query_group_ids,const std::vector<int> &query_algo_choices,
+                                    bool optimize_standalone_prefilter)
    {
       omp_set_num_threads(1);
       auto &stats = query_stats[id];
@@ -4071,6 +4074,14 @@ void UniNavGraph::calculate_query_features_only(
 
       // ======================= STAGE 1: DECISION MAKING =======================
       auto decision_start_time = std::chrono::high_resolution_clock::now();
+
+      // pre-filter是否使用优化模式
+      bool use_optimized = false;
+      if (routing_mode != 0) {
+         use_optimized = true; // SmartRoute 等模式强制使用大优化
+      } else {
+         use_optimized = optimize_standalone_prefilter; // 纯 Baseline 模式，听从用户指定的参数
+      }
 
       const std::bitset<16000000>* exact_mask_ptr = nullptr;
       const roaring::Roaring* final_roaring_ptr = nullptr;
@@ -4133,7 +4144,7 @@ void UniNavGraph::calculate_query_features_only(
 
             if (routing_mode == 4 || (routing_mode == 0 && baseline_alg == 5)) {
                auto mask_start = std::chrono::high_resolution_clock::now(); 
-               exact_mask_ptr = &get_exact_cand_size_and_mask(query_labels, stats.exact_cand_size);
+               exact_mask_ptr = &get_exact_cand_size_and_mask(query_labels, stats.exact_cand_size, use_optimized);
                stats.bitmap_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - mask_start).count(); 
                stats.global_p_pass = static_cast<float>(stats.exact_cand_size) / _num_points;
                has_exact_mask = true;
@@ -4326,13 +4337,12 @@ void UniNavGraph::calculate_query_features_only(
              } 
             // 否则回退到普通 Bitset 掩码（例如 Mode 1 生成的）
             else if (exact_mask_ptr != nullptr) {
-               bool use_optimized = false; 
-                 if (use_rabitq_prefilter && prefilter_query_ctx != nullptr) {
-                    search_baseline_rabitq(*exact_mask_ptr, K, exact_results.data(), dist_calcs, *prefilter_query_ctx, stats, use_optimized);
-                 } else {
-               search_baseline_exact(query, *exact_mask_ptr, K, exact_results.data(), dist_calcs, use_optimized);
+               if (use_rabitq_prefilter && prefilter_query_ctx != nullptr) {
+                  search_baseline_rabitq(*exact_mask_ptr, K, exact_results.data(), dist_calcs, *prefilter_query_ctx, stats, use_optimized);
+               } else {
+                  search_baseline_exact(query, *exact_mask_ptr, K, exact_results.data(), dist_calcs, use_optimized);
+               }
             }
-             }
 
             stats.num_distance_calcs = dist_calcs;
             stats.core_search_time_ms = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - search_time_start_ms).count();
@@ -4737,7 +4747,7 @@ void UniNavGraph::calculate_query_features_only(
                                  int routing_mode,int baseline_alg, faiss_navix::IndexHNSWFlat* navix_index, 
                                  const std::vector<IdxType> &true_query_group_ids,
                                  const std::vector<int>& query_algo_choices,
-                                 std::queue<int> task_queue)
+                                 std::queue<int> task_queue,bool optimize_standalone_prefilter)
    {
       auto num_queries = query_storage->get_num_points();
       _query_storage = query_storage;
@@ -4768,11 +4778,11 @@ void UniNavGraph::calculate_query_features_only(
                _thread_pool->enqueue([this, target_id, &global_search_cache_list, &query_storage, &distance_handler, &num_threads, &Lsearch, &num_entry_points, &scenario, &K, results, &num_cmps, &query_stats,
                                  &is_new_trie_method, &is_rec_more_start, &is_ung_more_entry, &lsearch_start, &lsearch_step,
                                  &efs_start, &efs_step_slow, &efs_step_fast, &lsearch_threshold,
-                                 &routing_mode, &baseline_alg, &num_queries, &navix_index, &true_query_group_ids, &query_algo_choices] { 
+                                 &routing_mode, &baseline_alg, &num_queries, &navix_index, &true_query_group_ids, &query_algo_choices,&optimize_standalone_prefilter] { 
                   this->thread_function(target_id, global_search_cache_list, query_storage, distance_handler, num_threads, Lsearch, num_entry_points, scenario, K, results, num_cmps, query_stats,
                                  is_new_trie_method, is_rec_more_start, is_ung_more_entry, lsearch_start, lsearch_step,
                                  efs_start, efs_step_slow, efs_step_fast, lsearch_threshold,
-                                 routing_mode, baseline_alg, num_queries, navix_index, true_query_group_ids, query_algo_choices);
+                                 routing_mode, baseline_alg, num_queries, navix_index, true_query_group_ids, query_algo_choices,optimize_standalone_prefilter);
                   return 1;
                }));   
       }

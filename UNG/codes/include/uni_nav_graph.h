@@ -182,7 +182,7 @@ namespace ANNS
                          int routing_mode, int baseline_alg, faiss_navix::IndexHNSWFlat* navix_index = nullptr,
                          const std::vector<IdxType> &true_query_group_ids = {},// 包含每个查询其真实来源组ID的向量
                          const std::vector<int>& query_algo_choices = {},
-                         std::queue<int> task_queue = std::queue<int>()); 
+                         std::queue<int> task_queue = std::queue<int>(),bool optimize_standalone_prefilter = false); 
 
       // 全局预测函数：统一计算所有查询的掩码和模型路由
       std::vector<int> global_predict_algo_choices(
@@ -307,7 +307,8 @@ namespace ANNS
       bool use_optimized_bitset);
     const std::bitset<16000000>& get_exact_cand_size_and_mask(
       const std::vector<LabelType>& query_labels,
-      size_t& cand_size) const;
+      size_t& cand_size,
+      bool use_optimized = true) const;
 
     // 使用CRoaring进行bitmap计算
     std::vector<roaring::Roaring> _vec_attr_roaring_inv;// 底层向量级别的 CRoaring 倒排索引 (用于极速计算 GlobalPpass)
@@ -408,7 +409,8 @@ namespace ANNS
                            int efs_start, int efs_step_slow,int efs_step_fast,int lsearch_threshold,
                            int routing_mode,int baseline_alg, IdxType num_queries, 
                            faiss_navix::IndexHNSWFlat* navix_index,
-                           const std::vector<IdxType> &true_query_group_ids,const std::vector<int> &query_algo_choices);
+                           const std::vector<IdxType> &true_query_group_ids,const std::vector<int> &query_algo_choices,
+                           bool optimize_standalone_prefilter);
       size_t get_candidate_count_for_label(LabelType label) const;
       // data
       std::shared_ptr<IStorage> _base_storage,
