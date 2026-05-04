@@ -8,7 +8,7 @@ BASE_ROOT = "/home/fengxiaoyao/FilterVector/FilterVectorResults"
 
 # 需要处理的数据集名称列表
 # "Amazon","BookReviews","Genome","Music","Reviews", "Tiktok","VariousImg","Laion"
-DATASETS = ["Amazon","BookReviews","Genome","Music","Reviews", "Tiktok","VariousImg","Laion"]
+DATASETS = ["Tiktok"]
 
 # 需要处理的算法列表 
 # "UNG-nTfalse","UNG+","ACORN-gamma","ACORN-1","NaviX-ACORN","pre-filter","SmartRoute","SmartRoute+"

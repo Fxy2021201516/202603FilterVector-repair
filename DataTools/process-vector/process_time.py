@@ -62,12 +62,12 @@ def process_csv_with_pandas(input_file, output_file, value, operation='sub'):
 # --- 主程序配置区 ---
 if __name__ == "__main__":
     # 文件路径
-    FILE_PATH = '/home/fengxiaoyao/FilterVector/FilterVectorResults/Music/Results/SmartRoute+/Index[M32_LB100_alpha1.2_C6_EP16_AN1511563_AM32_AMB64_AG80]_GT[GT_query_select_200_A_B_C-weighted-sub-base-123456789_random_300_K10]_Search[Ls10-Le200-Lp10_efsS200-efss200-efsf200-lt5000_K10_th100]/results/search_time_summary.csv'
+    FILE_PATH = '/home/fengxiaoyao/FilterVector/FilterVectorResults/Laion/Results/UNG+/Index[M32_LB1000_alpha1.2_C16_EP16_AN15151002_AM32_AMB64_AG80]_GT[GT_query_select_200_C_D-weighted-sub-base-123456789_random_300_K10]_Search[Ls1000-Le40000-Lp1000_efsS10-efss10-efsf10-lt500000_K10_th100]/results/search_time_summary.csv'
     
     # 输入和输出可以是同一个文件（覆盖），也可以是不同文件
     INPUT_FILENAME = FILE_PATH
     OUTPUT_FILENAME = FILE_PATH 
-    ADJUST_VALUE = 0.8      # 想操作的数值
+    ADJUST_VALUE = 1.2     # 想操作的数值
     MODE = 'mul'              # 'add' = 加 (+), 'sub' = 减 (-), 'mul' = 乘 (*), 'div' = 除 (/)
 
     process_csv_with_pandas(INPUT_FILENAME, OUTPUT_FILENAME, ADJUST_VALUE, MODE)

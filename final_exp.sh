@@ -7,12 +7,12 @@ echo "=== 启动批量实验任务流程 ==="
 echo "所有执行记录将保存至：$(pwd)/$LOG_DIR"
 
 DATASETS=(
-    # "Amazon"
-    # "BookReviews"
-    # "Genome"
-    # "Reviews"
-    # "VariousImg"
-    # "Music"
+    "Amazon"
+    "BookReviews"
+    "Genome"
+    "Reviews"
+    "VariousImg"
+    "Music"
     "Tiktok"
     "Laion"
 )

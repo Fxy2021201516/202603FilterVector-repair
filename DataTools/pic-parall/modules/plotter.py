@@ -70,20 +70,20 @@ def generate_qps_recall_grid(all_plot_items, main_title, output_filename, font_s
     main_gs = GridSpec(n_rows, n_cols, figure=fig)
     
     # --- 样式策略 ---
-    markers_list = ['o', 's', '^', 'D', 'v', 'p', '*']
+    markers_list = ['o', 's', '*','^', 'D', 'v', 'p']
     
     # 1. 定义颜色映射 (全局固定)
     alg_color_map = {
         "UNG": "tab:gray",
         "UNG+": "tab:blue",
         "ACORN-1": "tab:purple",
-        "ACORN-γ": "tab:orange",
+        "ACORN-γ": "tab:cyan",
         "pre-filtering": "gold",  
         "NaviX": "tab:pink",          
         "SmartRoute": "tab:green",
-        "SmartRoute+": "tab:red",
-        "SmartRoute++": "tab:cyan",
-        "SmartRoute+++": "tab:brown"    
+        "SmartRoute+": "tab:brown",
+        "SmartRoute++": "tab:orange",
+        "SmartRoute+++": "tab:red"    
         # "ImprovedUNG": "tab:cyan",
     }
 
@@ -164,8 +164,8 @@ def generate_qps_recall_grid(all_plot_items, main_title, output_filename, font_s
                 display_label = legend_label_map.get(alg_name, alg_name)
                 
                 # 直接绘制折线
-                current_markersize = 12 if alg_name == "pre-filtering" else 12
-                is_clip_on = False if alg_name in ["pre-filtering", "SmartRoute","SmartRoute+"] else True
+                current_markersize = 12 if alg_name in ["SmartRoute"] else 15
+                is_clip_on = False if alg_name in ["pre-filtering", "SmartRoute","SmartRoute+++"] else True
                 
                 # 直接绘制折线
                 ax.plot(df_sorted['Average_Recall'], df_sorted['QPS'], 
