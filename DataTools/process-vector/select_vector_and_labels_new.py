@@ -159,19 +159,19 @@ def analyze_all_queries(query_df, dataset, merged_data_dir, base_labels_path):
 if __name__ == "__main__":
     # ===================== 用户配置区 =====================
 
-    DATASET = "Genome" 
+    DATASET = "Laion" 
     
     # 1. 这是 new_select.py 生成的 *输入* 文件
-    SELECTED_CSV_PATH = "/home/fengxiaoyao/FilterVector/FilterVectorResults/Genome/Results/per-query_results/Genome_sub-base-123456789_K10_Comparison_selected_queries.csv"
+    SELECTED_CSV_PATH = "/home/fengxiaoyao/FilterVector/FilterVectorResults/Laion/Results/per-query_results/Laion_sub-base-123456789_K10_Comparison_selected_queries.csv"
     
     # 2. 这是包含 *所有* 原始查询向量和标签的目录
-    MERGED_DATA_DIR = "/home/fengxiaoyao/FilterVector/FilterVectorData/Genome/query_A_B_C-weighted-sub-base-123456789"
+    MERGED_DATA_DIR = "/home/fengxiaoyao/FilterVector/FilterVectorData/Laion/query_C_D-weighted-sub-base-123456789"
     
     # 3. 这是包含 *所有* 基础数据标签的 .txt 文件
-    BASE_LABELS_PATH = "/home/fengxiaoyao/FilterVector/FilterVectorData/Genome/Genome_base_labels.txt"
+    BASE_LABELS_PATH = "/home/fengxiaoyao/FilterVector/FilterVectorData/Laion/Laion_base_labels.txt"
     
     # 4. 这是你希望所有新查询子集写入的 *根* 目录
-    BASE_OUTPUT_DIR = "/home/fengxiaoyao/FilterVector/FilterVectorData/Genome"
+    BASE_OUTPUT_DIR = "/home/fengxiaoyao/FilterVector/FilterVectorData/Laion"
     
     # 5. 输出查询目录的前缀 (例如 "query_select_200")
     OUTPUT_PREFIX = "query_select_200"

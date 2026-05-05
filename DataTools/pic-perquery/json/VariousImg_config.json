@@ -51,14 +51,22 @@
                "analysis_params": {
                   "optimal_row_strategy": "default",
                   "enable_speedup_filter": true,
-                  "speedup_target_algorithm": "SmartRoute",
-                  "speedup_baseline_algorithms": [
-                     "UNG-nTfalse",
-                     "UNG+",
-                     "NaviX-ACORN",
-                     "ACORN-gamma"
+                  "speedup_rules": [
+                     {
+                        "target_algorithm": "UNG+",
+                        "baseline_algorithms": ["pre-filter","UNG-nTfalse"],
+                        "threshold": 1.15
+                     },
+                     {
+                        "target_algorithm": "SmartRoute",
+                        "baseline_algorithms": [
+                        "UNG+",
+                        "NaviX-ACORN",
+                        "ACORN-gamma"
+                        ],
+                        "threshold": 1.5
+                     }
                   ],
-                  "speedup_threshold": 1.5,
                   "query_id_splits": {
                      "Amazon": [400, 401, 500, 501],
                      "BookReviews": [100, 101, 200, 201],
@@ -68,20 +76,21 @@
                      "Tiktok": [400, 501, 1100, 1101],
                      "VariousImg": [700, 1001, 2000, 2001]
                   },
-                  "selection_ratios": [0,0,1],
+                  "selection_ratios": [0.02,1,1],
                   "c_length_range": [1, 9],
                   "c_ppass_filters": {
-                     "VariousImg": [1000, null]
+                     "VariousImg": [700, null]
+                  },
+                  "b_ppass_filters": {
+                     "VariousImg": [700, null]
                   },
                   "global_recall_filter": {
                      "enabled": false,
                      "min_recall": 0.8
                   },
-                  "a_recall_filter": {
-                     "enabled": false,
-                     "algorithm_name": "ACORN-gamma",
-                     "min_recall": 0.9
-                  }
+                  "a_recall_filter": { "enabled": false, "algorithm_name": "ACORN-gamma", "min_recall": 0.9 },
+                  "b_recall_filter": { "enabled": false, "algorithm_name": "UNG+", "min_recall": 1 },
+                  "c_recall_filter": { "enabled": false, "algorithm_name": "UNG+", "min_recall": 0.9 }
                }
             },
             {

@@ -123,65 +123,81 @@ def run_selection(merged_summary_path, output_path, params, attribute_coverage_p
     df_qualified = None 
 
     if ENABLE_SPEEDUP_FILTER:
-        print("\n  -> 'enable_speedup_filter' 为 True。执行步骤 A：加速比筛选...")
-        target_alg = params.get('speedup_target_algorithm')
-        baseline_algs = params.get('speedup_baseline_algorithms', [])
+        print("\n  -> 'enable_speedup_filter' 为 True。执行步骤 A：多重加速比规则筛选 (AND逻辑)...")
         
-        # 从 params 中获取阈值，默认为 1.0
-        speedup_threshold = params.get('speedup_threshold', 1.0)
-
-        if not target_alg or not baseline_algs:
-            print("  -> 错误: config.json 中未定义 'speedup_target_algorithm' 或 'speedup_baseline_algorithms'。")
+        # 读取多重规则配置
+        speedup_rules = params.get('speedup_rules', [])
+        
+        if not speedup_rules:
+            print("  -> 错误: config.json 中未定义 'speedup_rules'。")
             return
 
-        try:
-            # metric_short = METRIC_MAP_SELECT['SearchTime_ms']
-            metric_short = METRIC_MAP_SELECT['Time_ms']
-            target_col = f"{metric_short}_{ALGO_MAP_SELECT[target_alg]}"
+        metric_short = METRIC_MAP_SELECT['Time_ms']
+        
+        # AND 逻辑关键点：创建一个全为 True 的掩码。
+        # 只有当一个查询通过了所有规则，它对应的最终结果才会保持为 True。
+        final_valid_mask = pd.Series(True, index=df_full.index)
+
+        for i, rule in enumerate(speedup_rules):
+            target_alg = rule.get('target_algorithm')
+            baseline_algs = rule.get('baseline_algorithms', [])
+            threshold = rule.get('threshold', 1.0)
             
+            try:
+                target_col = f"{metric_short}_{ALGO_MAP_SELECT[target_alg]}"
+            except KeyError:
+                print(f"  -> 错误: 规则 {i+1} 的目标算法 '{target_alg}' 映射失败，请检查 ALGO_MAP_SELECT。")
+                return
+
             if target_col not in df_full.columns:
                 print(f"  -> 错误: 目标列 '{target_col}' 不在摘要文件中。")
                 return
 
-            df_ratios = df_full.copy()
+            df_temp = df_full.copy()
             ratio_cols = []
 
             for baseline in baseline_algs:
-                baseline_col = f"{metric_short}_{ALGO_MAP_SELECT[baseline]}"
-                if baseline_col in df_ratios.columns:
+                try:
+                    baseline_col = f"{metric_short}_{ALGO_MAP_SELECT[baseline]}"
+                except KeyError:
+                    print(f"  -> 警告: 基准算法 '{baseline}' 映射失败，跳过。")
+                    continue
+
+                if baseline_col in df_temp.columns:
                     ratio_col_name = f'Speedup_vs_{baseline}'
-                    df_ratios[ratio_col_name] = np.divide(df_ratios[baseline_col], df_ratios[target_col])
+                    df_temp[ratio_col_name] = np.divide(df_temp[baseline_col], df_temp[target_col])
                     ratio_cols.append(ratio_col_name)
                 else:
                     print(f"  -> 警告: 找不到基准列 '{baseline_col}'，跳过。")
             
             if not ratio_cols:
-                print("  -> 错误: 未能计算任何加速比。")
+                print(f"  -> 错误: 规则 {i+1} 未能计算任何基准加速比。")
                 return
 
-            df_ratios['min_speedup'] = df_ratios[ratio_cols].min(axis=1)
-            df_ratios.replace([np.inf, -np.inf], np.nan, inplace=True)
-            df_ratios.dropna(subset=['min_speedup'], inplace=True)
+            # 取当前规则下，目标算法对比所有基准算法的最差加速比
+            df_temp['min_speedup_temp'] = df_temp[ratio_cols].min(axis=1)
+            df_temp.replace([np.inf, -np.inf], np.nan, inplace=True)
             
-            # 将原来的 > 1.0 替换为 >= speedup_threshold
-            print(f"     -> 正在应用加速比阈值: min_speedup >= {speedup_threshold}")
-            df_qualified = df_ratios[df_ratios['min_speedup'] >= speedup_threshold].copy()
-            print(f"     -> 共有 {len(df_qualified)} / {len(df_ratios)} 个查询满足条件。")
+            # 判断是否大于等于当前规则的阈值
+            current_rule_mask = df_temp['min_speedup_temp'] >= threshold
+            current_rule_mask = current_rule_mask.fillna(False) 
+            
+            print(f"     -> 规则 {i+1} [{target_alg} vs {baseline_algs}, 阈值={threshold}]: 独立符合条件的有 {current_rule_mask.sum()} 个。")
+            
+            # 交集逻辑：将当前规则的判断结果与总结果进行 "与 (&)" 运算
+            final_valid_mask &= current_rule_mask
 
-            if df_qualified.empty:
-                print("     -> 警告: 没有查询满足条件，无法继续筛选。")
-                return
-                
-        except KeyError as e:
-            print(f"  -> 错误: 算法名称映射失败: {e}。请检查 ALGO_MAP_SELECT。")
-            return
-        except Exception as e:
-            print(f"  -> 错误: 计算加速比时出错: {e}")
+        # 应用最终的过滤掩码
+        df_qualified = df_full[final_valid_mask].copy()
+        print(f"     -> 综合所有规则 (必须同时满足)，最终有 {len(df_qualified)} / {len(df_full)} 个查询合格。")
+
+        if df_qualified.empty:
+            print("     -> 警告: 没有查询同时满足所有加速比条件，无法继续筛选。")
             return
     
     else:
         print("\n  -> 'enable_speedup_filter' 为 False。跳过步骤 A (加速比筛选)。")
-        print(f"     -> 将使用所有 {len(df_full)} 个查询进行比例抽样。")
+        print(f"     -> 将使用所有 {len(df_full)} 个查询进行后续操作。")
         df_qualified = df_full.copy()
 
     # --- 步骤 B: 按 QueryID 分类 ---
@@ -301,9 +317,6 @@ def run_selection(merged_summary_path, output_path, params, attribute_coverage_p
         else:
             print("     -> 警告: 找不到 'QuerySize' 列，无法应用 C 类长度过滤器。")
     
-    # ======================================================
-    # --- (新增结束) ---
-    # ======================================================
 
     print(f"\n     -> A类 (QueryID 0-999): {len(df_A)} 个合格查询")
     print(f"     -> B类 (QueryID 1000-1999): {len(df_B)} 个合格查询")
@@ -382,7 +395,7 @@ def run_selection(merged_summary_path, output_path, params, attribute_coverage_p
     # --- 步骤 E: 保存结果 ---
     print("  -> 步骤 E: 保存最终的 1000 个查询...")
     
-    cols_to_keep = list(df_merged.columns) + ['p_pass', 'min_speedup']
+    cols_to_keep = list(df_merged.columns) + ['p_pass']
     cols_to_save = [col for col in cols_to_keep if col in df_final_selection.columns]
     
     df_final_selection[cols_to_save].to_csv(output_path, index=False, float_format='%.4f')

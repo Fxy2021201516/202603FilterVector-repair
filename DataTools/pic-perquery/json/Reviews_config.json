@@ -51,13 +51,22 @@
                "analysis_params": {
                   "optimal_row_strategy": "default",
                   "enable_speedup_filter": true,
-                  "speedup_target_algorithm": "SmartRoute",
-                  "speedup_baseline_algorithms": [
-                     "UNG-nTfalse",
-                     "NaviX-ACORN",
-                     "ACORN-gamma"
+                  "speedup_rules": [
+                     {
+                        "target_algorithm": "UNG+",
+                        "baseline_algorithms": ["pre-filter"],
+                        "threshold": 1.3
+                     },
+                     {
+                        "target_algorithm": "SmartRoute",
+                        "baseline_algorithms": [
+                           "UNG-nTfalse",
+                           "NaviX-ACORN",
+                           "ACORN-gamma"
+                        ],
+                        "threshold": 1.3
+                     }
                   ],
-                  "speedup_threshold": 1.2,
                   "query_id_splits": {
                      "Amazon": [400, 401, 500, 501],
                      "BookReviews": [100, 101, 200, 201],
@@ -65,20 +74,21 @@
                      "Music": [700, 1001, 2000, 2001],
                      "Reviews": [60, 81, 180, 181]
                   },
-                  "selection_ratios": [0.01,0,1],
+                  "selection_ratios": [0.01,0.1,1],
                   "c_length_range": [1, 9],
                   "c_ppass_filters": {
-                     "Reviews": [250, 200000]
+                     "Reviews": [300, null]
+                  },
+                  "b_ppass_filters": {
+                     "Reviews": [300, null]
                   },
                   "global_recall_filter": {
                      "enabled": false,
                      "min_recall": 0.8
                   },
-                  "a_recall_filter": {
-                     "enabled": false,
-                     "algorithm_name": "ACORN-gamma",
-                     "min_recall": 0.9
-                  }
+                  "a_recall_filter": { "enabled": false, "algorithm_name": "UNG+", "min_recall": 0.95 },
+                  "b_recall_filter": { "enabled": false, "algorithm_name": "UNG+", "min_recall": 0.95 },
+                  "c_recall_filter": { "enabled": false, "algorithm_name": "UNG+", "min_recall": 0.95 }
                }
             },
             {

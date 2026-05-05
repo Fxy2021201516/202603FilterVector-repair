@@ -51,11 +51,18 @@
                "analysis_params": {
                   "optimal_row_strategy": "default",
                   "enable_speedup_filter": true,
-                  "speedup_target_algorithm": "UNG+",
-                  "speedup_baseline_algorithms": [
-                     "UNG-nTfalse"
+                  "speedup_rules": [
+                     {
+                        "target_algorithm": "UNG+",
+                        "baseline_algorithms": ["pre-filter","UNG-nTfalse"],
+                        "threshold": 1.3
+                     },
+                     {
+                        "target_algorithm": "SmartRoute",
+                        "baseline_algorithms": ["pre-filter","UNG+"],
+                        "threshold": 1.2
+                     }
                   ],
-                  "speedup_threshold": 1.2,
                   "query_id_splits": {
                      "Amazon": [400, 401, 500, 501],
                      "BookReviews": [100, 101, 200, 201],
@@ -64,8 +71,8 @@
                      "Reviews": [60, 81, 180, 181],
                      "Tiktok": [400, 501, 1100, 1101]
                   },
-                  "selection_ratios": [0.1,0.3,1],
-                  "c_length_range": [1, 9],
+                  "selection_ratios": [0.01,0.2,1],
+                  "c_length_range": [2, 9],
                   "c_ppass_filters": {
                      "Tiktok": [23, null]
                   },
@@ -76,9 +83,9 @@
                      "enabled": false,
                      "min_recall": 0.8
                   },
-                  "a_recall_filter": { "enabled": true, "algorithm_name": "UNG+", "min_recall": 0.95 },
-                  "b_recall_filter": { "enabled": true, "algorithm_name": "UNG+", "min_recall": 0.95 },
-                  "c_recall_filter": { "enabled": true, "algorithm_name": "UNG+", "min_recall": 0.95 }
+                  "a_recall_filter": { "enabled": false, "algorithm_name": "ACORN-gamma", "min_recall": 0.9 },
+                  "b_recall_filter": { "enabled": false, "algorithm_name": "UNG+", "min_recall": 1 },
+                  "c_recall_filter": { "enabled": false, "algorithm_name": "UNG+", "min_recall": 0.9 }
                }
             },
             {
